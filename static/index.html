@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Agent Trace Inspector</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">🔍 Agent Trace Inspector</div>
+    <div class="nav-buttons">
+      <button class="tab nav-btn active" id="navTraces" onclick="switchView('traces')">Trace 调试</button>
+      <button class="tab nav-btn" id="navRuns" onclick="switchView('runs')">批量评测</button>
+    </div>
+    <input id="searchInput" class="search" placeholder="搜索..." oninput="renderList()">
+    <div id="traceList" class="trace-list"></div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="traceTitle">选择一个 Trace 或 Run</h1>
+        <div id="traceMeta" class="meta"></div>
+      </div>
+      <div class="actions">
+        <button onclick="refreshList()">刷新</button>
+        <button onclick="loadSample()">载入样例</button>
+      </div>
+    </header>
+    <div id="content" class="content">
+      <div class="empty">← 从左侧选择一个记录</div>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
