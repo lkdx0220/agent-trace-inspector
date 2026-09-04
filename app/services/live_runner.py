@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from app.db import save_trace
 from app.services.eval_store import list_test_cases, save_run
 from app.services.evaluator import compute_run_summary, evaluate_trace_for_case
+from app.services.path_guard import ensure_project_path
 from schemas.eval import RunRecord, TestCase
 from schemas.trace import Trace
 
@@ -66,6 +67,10 @@ def _export_one(project_path: Path, question: str, out_path: Path, context: str 
 
 
 def run_live(project_path: str, case_ids: List[str], run_name: str = "实时评测") -> RunRecord:
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        raise ValueError(str(e))
     project = Path(project_path)
     all_cases = list_test_cases()
     selected = [c for c in all_cases if c["case_id"] in case_ids]
@@ -74,8 +79,12 @@ def run_live(project_path: str, case_ids: List[str], run_name: str = "实时评�
 
     # 读取 golden_test_set 中的 context 字段，用于上下文处理题
     ctx_map = {}
+    golden_path = os.environ.get(
+        "GOLDEN_TEST_SET_PATH",
+        "C:/Users/24701/Desktop/原神剧情/golden_test_set.json",
+    )
     try:
-        gs = json.loads(Path("C:/Users/24701/Desktop/原神剧情/golden_test_set.json").read_text(encoding="utf-8"))
+        gs = json.loads(Path(golden_path).read_text(encoding="utf-8"))
         ctx_map = {q["id"]: (q.get("context") or "") for q in gs.get("questions", [])}
     except Exception:
         pass

@@ -27,6 +27,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from schemas.trace import (
     AgentInfo,
+    SourceSnapshot,
     Span,
     SpanStatus,
     SpanType,
@@ -100,6 +101,7 @@ def build_trace_from_result(
     question: str,
     started_at: datetime,
     agent_info: Optional[AgentInfo] = None,
+    project_path: Optional[Path] = None,
 ) -> Trace:
     """把 create_agent_workflow().invoke() 的结果转成 Trace。"""
     messages: List[BaseMessage] = result.get("messages") or []
@@ -250,6 +252,14 @@ def build_trace_from_result(
     root.end_time = datetime.now().astimezone()
     duration_ms = int((root.end_time - started_at).total_seconds() * 1000)
 
+    source_snapshot = None
+    if project_path is not None:
+        try:
+            from app.services.source_snapshot import capture_snapshot
+            source_snapshot = SourceSnapshot(**capture_snapshot(str(project_path)))
+        except Exception:
+            source_snapshot = None
+
     return Trace(
         trace_id=trace_id,
         agent=agent_info or AgentInfo(),
@@ -265,6 +275,7 @@ def build_trace_from_result(
             response_mode=response_mode,
             run_id=result.get("run_id"),
         ),
+        source_snapshot=source_snapshot,
         root_span=root,
     )
 
@@ -530,7 +541,7 @@ def run_and_export(project_path: Path, question: str, out_path: Path, context: s
 
     tracer.disable_trace()
 
-    trace = build_trace_from_result(result, question, started_at)
+    trace = build_trace_from_result(result, question, started_at, project_path=project_path)
     _enrich_trace_with_events(trace, events)
     _add_missing_llm_spans_from_events(trace, events)
     _fill_assess_router_times(trace, events)

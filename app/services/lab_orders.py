@@ -77,6 +77,10 @@ def generate_lab_orders(
         "规划/回答系统提示词对工具调用、未收录、近似对象的硬规则原文是什么？",
         "run_lab_check", {"lab_order_id": "LO-003"},
         "判断 Agent 是否违反系统提示词必须以原文为准", "prompt_rule_excerpt")
+    add("LO-EV-01", "trace_truth_audit", "Trace 真相重算与评测一致性审计",
+        "从 raw Trace 独立重算：plan 文本是否规划了工具但实际没调用？是否存在 not_found/短路？答案缺失的关键词/禁词是否与评测器 reasons 一致？",
+        "run_lab_check", {"lab_order_id": "LO-EV-01"},
+        "评测器可能漏报或误报，必须有一次不依赖 reasons 的独立重算作为对照", "trace_truth_audit")
 
     # ---- 缺少必须包含 ----
     missing = []

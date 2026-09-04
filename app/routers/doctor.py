@@ -2,17 +2,18 @@
 """项目医生 API。"""
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.services.doctor_tools import DEFAULT_PROJECT_PATH
 from app.services.eval_store import get_prescription, save_prescription
+from app.services.rate_limit import doctor_rate_limit
 from app.services.project_doctor import prescribe_run_case
 
 router = APIRouter(prefix="/api", tags=["doctor"])
 
 
 @router.post("/runs/{run_id}/doctor/{case_id}")
-def run_doctor(run_id: str, case_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def run_doctor(run_id: str, case_id: str, payload: Optional[Dict[str, Any]] = None, _rate: None = Depends(doctor_rate_limit)) -> Dict[str, Any]:
     payload = payload or {}
     project_path = payload.get("project_path") or DEFAULT_PROJECT_PATH
     model = payload.get("model")

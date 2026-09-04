@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.services.path_guard import ensure_project_path
 from app.services.system_prompts import (
     get_answer_system_prompt,
     get_plan_system_prompt,
@@ -111,10 +112,21 @@ def _load_env(project_path: Path) -> Dict[str, str]:
     return env
 
 
-def _run_probe(project_path: Path, code: str, timeout: int = 240) -> Dict[str, Any]:
+def _run_probe(
+    project_path: Path,
+    code: str,
+    timeout: int = 240,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """运行一段只读 Python 探针。
+
+    安全设计：用户/题目相关内容通过独立的 JSON payload 文件传给子进程，
+    不再拼接到 Python 源码中，避免“代码注入/命令注入”。
+    """
     tmp_dir = INSPECTOR_ROOT / "data" / "tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     probe_file = tmp_dir / f"doctor_probe_{uuid.uuid4().hex}.py"
+    payload_file = None
     marker = f"@@DOCTOR_PROBE_{uuid.uuid4().hex}@@"
     print_line = (
         "print("
@@ -123,10 +135,24 @@ def _run_probe(project_path: Path, code: str, timeout: int = 240) -> Dict[str, A
         + json.dumps(marker)
         + ")"
     )
-    probe_file.write_text(code + "\n" + print_line + "\n", encoding="utf-8")
+    # 子进程 stdout 在 Windows 默认用 GBK 编码，强制 UTF-8，避免中文探针结果乱码。
+    probe_code = ["import sys\n", "sys.stdout.reconfigure(encoding='utf-8')\n"]
+    if payload is not None:
+        payload_file = tmp_dir / f"doctor_probe_{uuid.uuid4().hex}.json"
+        payload_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        probe_code.append(
+            "import json\n"
+            "PAYLOAD = json.load(open(sys.argv[1], encoding='utf-8'))\n"
+        )
+    probe_code.append(code)
+    probe_code.append("\n" + print_line + "\n")
+    probe_file.write_text("".join(probe_code), encoding="utf-8")
+    cmd = [sys.executable, str(probe_file)]
+    if payload_file is not None:
+        cmd.append(str(payload_file))
     try:
         result = subprocess.run(
-            [sys.executable, str(probe_file)],
+            cmd,
             cwd=str(project_path),
             env=_load_env(project_path),
             capture_output=True,
@@ -138,9 +164,9 @@ def _run_probe(project_path: Path, code: str, timeout: int = 240) -> Dict[str, A
         stdout = result.stdout or ""
         if marker in stdout:
             left = stdout.split(marker, 1)[1]
-            payload = left.rsplit(marker, 1)[0]
+            out_payload = left.rsplit(marker, 1)[0]
             try:
-                return {"ok": True, "data": json.loads(payload)}
+                return {"ok": True, "data": json.loads(out_payload)}
             except Exception as e:
                 return {"ok": False, "error": f"probe JSON 解析失败: {e}", "stdout_tail": stdout[-1500:]}
         return {
@@ -155,6 +181,11 @@ def _run_probe(project_path: Path, code: str, timeout: int = 240) -> Dict[str, A
             probe_file.unlink()
         except Exception:
             pass
+        if payload_file is not None:
+            try:
+                payload_file.unlink()
+            except Exception:
+                pass
 
 
 def kb_probe_contains(probe: Dict[str, Any], keyword: str) -> bool:
@@ -202,38 +233,243 @@ def keyword_retrieval_conclusion(keyword: str, where: Dict[str, Any], probe: Dic
 
 def search_knowledge_base(project_path: str, query: str, top_k: int = 6) -> Dict[str, Any]:
     """子进程调用原项目 hybrid_search（只读）。"""
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    payload = {"project_path": str(project_path), "queries": [str(query)], "top_k": int(top_k)}
     code = (
-        "import sys, json, os\n"
+        "import os\n"
+        "PROJECT = PAYLOAD['project_path']\n"
+        "sys.path.insert(0, PROJECT)\n"
+        "os.chdir(PROJECT)\n"
+        "from app.retrieval import hybrid_search\n"
+        "out = {'queries': {}}\n"
+        "for q in PAYLOAD['queries']:\n"
+        "    try:\n"
+        "        out['queries'][q] = hybrid_search.invoke({'query': q, 'top_k': PAYLOAD['top_k']})\n"
+        "    except Exception as e:\n"
+        "        out['queries'][q] = 'ERROR: ' + repr(e)\n"
+    )
+    return _run_probe(Path(project_path), code, payload=payload)
+
+
+def raw_kb_contains(project_path: str, keyword: str) -> Dict[str, Any]:
+    """子进程只读扫描知识库原始数据文件，返回是否包含关键词及命中文件。
+
+    用于区分“知识库真缺”与“检索/切片没暴露”：检索 probe 可能因为片段截断
+    没返回关键词，但原始 JSON/Python 知识库文件中可能确实存在。
+    """
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    code = (
+        "import os\n"
+        "import sys, os, json\n"
         + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
         + "sys.path.insert(0, PROJECT)\n"
         + "os.chdir(PROJECT)\n"
-        + "from app.retrieval import hybrid_search\n"
-        + "out = {'queries': {}}\n"
-        + "for q in " + json.dumps([query], ensure_ascii=False) + ":\n"
+        + "keyword = " + json.dumps(str(keyword), ensure_ascii=False) + "\n"
+        + "targets = [\n"
+        "    'content_data/quests_processed.json',\n"
+        "    'content_data/quests_主线.json',\n"
+        "    'content_data/quests_传说任务.json',\n"
+        "    'content_data/quests_世界任务.json',\n"
+        "    'content_data/quests_魔神任务.json',\n"
+        "    'content_data/quests_活动活动.json',\n"
+        "    'content_data/quests_其他任务.json',\n"
+        "    'content_data/quests_彩蛋剧情.json',\n"
+        "    'content_data/quests_地图事件.json',\n"
+        "    'content_data/quests_委托任务.json',\n"
+        "    'content_data/quests_部族纪闻.json',\n"
+        "    'content_data/quests_游逸旅闻.json',\n"
+        "    'content_data/lore.json',\n"
+        "    'content_data/concepts.json',\n"
+        "    'content_data/npcs_processed.json',\n"
+        "    'content_data/npcs_wiki_details.json',\n"
+        "    'genshin_knowledge_base/roles.py',\n"
+        "    'genshin_knowledge_base/quests.py',\n"
+        "    'genshin_knowledge_base/main_story.py',\n"
+        "    'genshin_knowledge_base/regions.py',\n"
+        "]\n"
+        + "hits = []\n"
+        + "for rel in targets:\n"
+        + "    p = os.path.join(PROJECT, rel)\n"
+        + "    if not os.path.exists(p):\n"
+        + "        continue\n"
         + "    try:\n"
-        + "        out['queries'][q] = hybrid_search.invoke({'query': q, 'top_k': " + str(int(top_k)) + "})\n"
-        + "    except Exception as e:\n"
-        + "        out['queries'][q] = 'ERROR: ' + repr(e)\n"
+        + "        with open(p, 'r', encoding='utf-8', errors='replace') as f:\n"
+        + "            text = f.read()\n"
+        + "        if keyword in text:\n"
+        + "            hits.append(rel)\n"
+        + "    except Exception:\n"
+        + "        continue\n"
+        + "out = {'keyword': keyword, 'contains': bool(hits), 'hits': hits}\n"
     )
     return _run_probe(Path(project_path), code)
 
 
 def inspect_aliases(project_path: str, term: str) -> Dict[str, Any]:
     """子进程读取原项目 character_aliases.py 并执行 resolve_aliases（只读）。"""
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    payload = {"project_path": str(project_path), "term": str(term)}
+    code = (
+        "import os\n"
+        "PROJECT = PAYLOAD['project_path']\n"
+        "sys.path.insert(0, PROJECT)\n"
+        "os.chdir(PROJECT)\n"
+        "from character_aliases import ALIAS_MAP, resolve_aliases\n"
+        "term = PAYLOAD['term']\n"
+        "out = {\n"
+        "    'term': term,\n"
+        "    'canonical': ALIAS_MAP.get(term),\n"
+        "    'variants': resolve_aliases(term),\n"
+        "}\n"
+    )
+    return _run_probe(Path(project_path), code, payload=payload)
+
+
+def knowledge_probe_batch(project_path: str, queries: List[str], top_k: int = 5, timeout: int = 480) -> Dict[str, Any]:
+    """一次子进程内批量执行 hybrid_search，避免每个关键词都重新加载原项目。
+
+    返回 {"queries": {q: 原始返回文本或 "ERROR: ..."}}。
+    """
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    queries = [str(q) for q in (queries or []) if str(q).strip()]
+    if not queries:
+        return {"ok": True, "data": {"queries": {}}}
+    code = (
+        "import sys, os, json\n"
+        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
+        + "sys.path.insert(0, PROJECT)\n"
+        + "os.chdir(PROJECT)\n"
+        + "from app.retrieval import hybrid_search\n"
+        + "out = {'queries': {}}\n"
+        + "for q in " + json.dumps(queries, ensure_ascii=False) + ":\n"
+        + "    try:\n"
+        + "        out['queries'][q] = hybrid_search.invoke({'query': q, 'top_k': " + str(int(top_k)) + "})\n"
+        + "    except Exception as e:\n"
+        + "        out['queries'][q] = 'ERROR: ' + repr(e)\n"
+    )
+    return _run_probe(Path(project_path), code, timeout=timeout)
+
+
+RAW_KB_TARGETS = [
+    "content_data/quests_processed.json",
+    "content_data/quests_主线.json",
+    "content_data/quests_传说任务.json",
+    "content_data/quests_世界任务.json",
+    "content_data/quests_魔神任务.json",
+    "content_data/quests_活动活动.json",
+    "content_data/quests_其他任务.json",
+    "content_data/quests_彩蛋剧情.json",
+    "content_data/quests_地图事件.json",
+    "content_data/quests_委托任务.json",
+    "content_data/quests_部族纪闻.json",
+    "content_data/quests_游逸旅闻.json",
+    "content_data/lore.json",
+    "content_data/concepts.json",
+    "content_data/npcs_processed.json",
+    "content_data/npcs_wiki_details.json",
+    "genshin_knowledge_base/roles.py",
+    "genshin_knowledge_base/quests.py",
+    "genshin_knowledge_base/main_story.py",
+    "genshin_knowledge_base/regions.py",
+]
+
+
+def raw_kb_contains_multi(project_path: str, keywords: List[str], timeout: int = 300) -> Dict[str, Any]:
+    """一次子进程扫描全部核心原始数据文件，返回每个关键词是否存在于原始数据。"""
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    keywords = [str(k) for k in (keywords or []) if str(k).strip()]
+    if not keywords:
+        return {"ok": True, "data": {}}
+    code = (
+        "import sys, os, json\n"
+        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
+        + "sys.path.insert(0, PROJECT)\n"
+        + "os.chdir(PROJECT)\n"
+        + "keywords = " + json.dumps(keywords, ensure_ascii=False) + "\n"
+        + "targets = " + json.dumps(RAW_KB_TARGETS, ensure_ascii=False) + "\n"
+        + "texts = {}\n"
+        + "for rel in targets:\n"
+        + "    p = os.path.join(PROJECT, rel)\n"
+        + "    if not os.path.exists(p):\n"
+        + "        continue\n"
+        + "    try:\n"
+        + "        with open(p, 'r', encoding='utf-8', errors='replace') as f:\n"
+        + "            texts[rel] = f.read()\n"
+        + "    except Exception:\n"
+        + "        continue\n"
+        + "out = {}\n"
+        + "for kw in keywords:\n"
+        + "    hits = [rel for rel, text in texts.items() if kw in text]\n"
+        + "    out[kw] = {'keyword': kw, 'contains': bool(hits), 'hits': hits}\n"
+    )
+    return _run_probe(Path(project_path), code, timeout=timeout)
+
+
+def inspect_aliases_multi(project_path: str, terms: List[str], timeout: int = 180) -> Dict[str, Any]:
+    """一次子进程批量解析多个词条的别名映射。"""
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    terms = [str(t) for t in (terms or []) if str(t).strip()]
+    if not terms:
+        return {"ok": True, "data": {}}
     code = (
         "import sys, os, json\n"
         + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
         + "sys.path.insert(0, PROJECT)\n"
         + "os.chdir(PROJECT)\n"
         + "from character_aliases import ALIAS_MAP, resolve_aliases\n"
-        + "term = " + json.dumps(str(term), ensure_ascii=False) + "\n"
+        + "terms = " + json.dumps(terms, ensure_ascii=False) + "\n"
+        + "out = {}\n"
+        + "for term in terms:\n"
+        + "    try:\n"
+        + "        out[term] = {'term': term, 'canonical': ALIAS_MAP.get(term), 'variants': resolve_aliases(term)}\n"
+        + "    except Exception as e:\n"
+        + "        out[term] = {'term': term, 'canonical': None, 'variants': [], 'error': repr(e)}\n"
+    )
+    return _run_probe(Path(project_path), code, timeout=timeout)
+
+
+def routing_probe(project_path: str, question: str, timeout: int = 180) -> Dict[str, Any]:
+    """子进程只读读取当前 intent_router.py 的确定性路由规则。
+
+    返回 tool_groups / hard_rule_hit / required_tools（当前版本对本题强制要求的工具集）。
+    这是“当前代码”视角，是否适用于 Trace 运行时刻由版本快照单独判定。
+    """
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    code = (
+        "import sys, os, json\n"
+        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
+        + "sys.path.insert(0, PROJECT)\n"
+        + "os.chdir(PROJECT)\n"
+        + "from intent_router import TOOL_GROUPS, _TASK_METADATA_HARD_RULE\n"
+        + "question = " + json.dumps(str(question), ensure_ascii=False) + "\n"
         + "out = {\n"
-        + "    'term': term,\n"
-        + "    'canonical': ALIAS_MAP.get(term),\n"
-        + "    'variants': resolve_aliases(term),\n"
+        + "    'tool_groups': TOOL_GROUPS,\n"
+        + "    'hard_rule_hit': bool(_TASK_METADATA_HARD_RULE.search(question)),\n"
+        + "    'required_tools': list(TOOL_GROUPS.get('D', [])) if _TASK_METADATA_HARD_RULE.search(question) else [],\n"
         + "}\n"
     )
-    return _run_probe(Path(project_path), code)
+    return _run_probe(Path(project_path), code, timeout=timeout)
+
 
 
 # ============================================================
@@ -241,7 +477,20 @@ def inspect_aliases(project_path: str, term: str) -> Dict[str, Any]:
 # ============================================================
 
 def _safe_relative(project_root: Path, rel: str) -> Optional[Path]:
-    p = (project_root / rel).resolve()
+    """严格限制相对路径必须位于 project_root 内。
+
+    在 resolve 前先拒绝绝对路径和 .. 段，避免路径穿越。
+    """
+    if not rel or not isinstance(rel, str):
+        return None
+    rel_clean = rel.replace("\\", "/").strip()
+    if not rel_clean or Path(rel_clean).is_absolute():
+        return None
+    parts = [x for x in rel_clean.split("/") if x]
+    if any(x == ".." for x in parts):
+        return None
+    # 允许形如 app/agent/nodes.py
+    p = (project_root / rel_clean).resolve()
     try:
         p.relative_to(project_root.resolve())
     except ValueError:
@@ -249,11 +498,30 @@ def _safe_relative(project_root: Path, rel: str) -> Optional[Path]:
     return p
 
 
+UNSAFE_FILE_PARTS = (
+    ".git", ".env", ".pem", ".key", "secret", "credential",
+    "token", "auth", "node_modules", "__pycache__", ".venv", "venv",
+)
+
+
+def _is_unsafe_rel_path(rel_path: str) -> bool:
+    low = (rel_path or "").replace("\\", "/").lower()
+    return any(part in low for part in UNSAFE_FILE_PARTS)
+
+
 def read_project_file(project_path: str, rel_path: str, start_line: int = 1, end_line: int = 200) -> Dict[str, Any]:
-    root = Path(project_path).resolve()
+    try:
+        root = ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    root = root.resolve()
+    if _is_unsafe_rel_path(rel_path):
+        return {"ok": False, "error": f"禁止读取敏感/非源码文件: {rel_path}"}
     path = _safe_relative(root, rel_path)
     if path is None or not path.exists() or not path.is_file():
         return {"ok": False, "error": f"文件不存在或越界: {rel_path}"}
+    if _is_unsafe_rel_path(path.as_posix()):
+        return {"ok": False, "error": f"禁止读取敏感/非源码文件: {rel_path}"}
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception as e:
@@ -275,12 +543,18 @@ def read_project_file(project_path: str, rel_path: str, start_line: int = 1, end
 
 
 def grep_project(project_path: str, pattern: str, rel_path: str = "") -> Dict[str, Any]:
-    root = Path(project_path).resolve()
+    try:
+        root = ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    root = root.resolve()
     hits: List[Dict[str, Any]] = []
     if not pattern:
         return {"ok": False, "error": "pattern 不能为空"}
     regex = re.compile(re.escape(pattern), re.IGNORECASE)
     if rel_path:
+        if _is_unsafe_rel_path(rel_path):
+            return {"ok": True, "pattern": pattern, "hits": [], "truncated": False}
         cand = _safe_relative(root, rel_path)
         candidates = [cand] if cand else []
     else:
@@ -291,6 +565,8 @@ def grep_project(project_path: str, pattern: str, rel_path: str = "") -> Dict[st
             if not p.is_file():
                 continue
             if any(part in SKIP_DIRS for part in p.parts):
+                continue
+            if _is_unsafe_rel_path(p.as_posix()):
                 continue
             if p.suffix not in {".py", ".txt", ".json", ".md"}:
                 continue
@@ -310,14 +586,92 @@ def grep_project(project_path: str, pattern: str, rel_path: str = "") -> Dict[st
     return {"ok": True, "pattern": pattern, "hits": hits, "truncated": False}
 
 
+
+def _project_vcs_info(project_path: str) -> Dict[str, Any]:
+    """只读获取原项目当前 git 版本与工作区状态，供提示词证据标注“当前版本”。"""
+    root = Path(project_path)
+    head = None
+    dirty = None
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            head = r.stdout.strip()
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            dirty = bool(r.stdout.strip())
+    except Exception:
+        pass
+    return {
+        "source": "current_working_tree",
+        "git_head": head,
+        "git_dirty": dirty,
+        "read_at": now_iso(),
+    }
+
+
+# 系统提示词文件在项目根下的相对路径
+def _prompt_rel_path(name: str) -> str:
+    mapping = {
+        "plan": "prompts/system/agent_system_v4_plan.txt",
+        "answer": "prompts/system/agent_system_v4_answer.txt",
+        "tool_rule": "prompts/system/agent_system_v4_plan.txt",
+    }
+    return mapping.get(name, "")
+
+
 def read_system_prompt(project_path: str, name: str) -> Dict[str, Any]:
+    """只读读取系统提示词，并标注“当前工作区版本”元数据。
+
+    注意：返回的是诊断时刻的当前工作区文件，不一定等于 Trace 运行时的版本。
+    医生不得把当前规则直接当作旧 Trace 已生效的规则来判违规。
+    """
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     name = (name or "").lower()
+    vcs = _project_vcs_info(project_path)
+    rel = _prompt_rel_path(name)
+    file_meta: Dict[str, Any] = {}
+    if rel:
+        fp = Path(project_path) / rel
+        if fp.exists():
+            st = fp.stat()
+            file_meta = {
+                "rel_path": rel,
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(),
+            }
     if name in {"plan", "agent_system_v4_plan", "规划"}:
-        return {"ok": True, "name": "agent_system_v4_plan", "content": get_plan_system_prompt(project_path)}
+        return {
+            "ok": True, "name": "agent_system_v4_plan",
+            "content": get_plan_system_prompt(project_path),
+            "source_snapshot": vcs, "file_meta": file_meta,
+            "version_notice": "此文件为当前工作区版本，不一定等于 Trace 运行时的版本；判定违规前必须确认版本一致。",
+        }
     if name in {"answer", "agent_system_v4_answer", "回答"}:
-        return {"ok": True, "name": "agent_system_v4_answer", "content": get_answer_system_prompt(project_path)}
+        return {
+            "ok": True, "name": "agent_system_v4_answer",
+            "content": get_answer_system_prompt(project_path),
+            "source_snapshot": vcs, "file_meta": file_meta,
+            "version_notice": "此文件为当前工作区版本，不一定等于 Trace 运行时的版本；判定违规前必须确认版本一致。",
+        }
     if name in {"tool_rule", "tool_requirement", "工具规则"}:
-        return {"ok": True, "name": "tool_requirement_excerpt", "content": get_tool_requirement_excerpt(project_path)}
+        return {
+            "ok": True, "name": "tool_requirement_excerpt",
+            "content": get_tool_requirement_excerpt(project_path),
+            "source_snapshot": vcs, "file_meta": file_meta,
+            "version_notice": "此文件为当前工作区版本，不一定等于 Trace 运行时的版本；判定违规前必须确认版本一致。",
+        }
     return {"ok": False, "error": f"未知系统提示词: {name}（可选 plan/answer/tool_rule）"}
 
 
@@ -474,11 +828,169 @@ def _plan_signal(trace: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 signal["tool_call_names"].extend(str(n) for n in names)
             if data.get("tool_skip_reason"):
                 signal["tool_skip_reason"] = data.get("tool_skip_reason")
-        if event and "retry" in str(event):
+        is_retry_event = bool(event and "retry" in str(event))
+        is_retry_start = event == "llm_start" and str(data.get("role") or "") == "plan_retry"
+        if is_retry_event or is_retry_start:
             signal["plan_retry_events"] += 1
     signal["metadata"] = (trace or {}).get("metadata") or {}
     return signal
 
+
+
+
+# 常见工具名，用于从 plan 文本中识别“计划要调用但实际未调用”的工具意图。
+KNOWN_TOOL_NAMES = {
+    "hybrid_search", "query_character", "query_region", "query_story",
+    "query_weapon", "query_quest", "query_monster", "query_artifact",
+    "query_material", "query_food", "query_book", "query_npc",
+    "load_quest_content", "search_knowledge_base",
+}
+
+
+def _extract_plan_tool_intents(plan_texts: List[str]) -> List[str]:
+    """从 plan 文本中提取“明确写到要调用”的工具名，不做语义猜测。"""
+    intents: List[str] = []
+    for text in plan_texts:
+        for m in re.finditer(r"(?:调用|使用|检索|查询)\s*([A-Za-z_][A-Za-z0-9_]*)", text):
+            name = m.group(1)
+            if name in KNOWN_TOOL_NAMES or name.startswith("query_"):
+                intents.append(name)
+        for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", text):
+            name = m.group(1)
+            if name in KNOWN_TOOL_NAMES:
+                intents.append(name)
+    return list(dict.fromkeys(intents))
+
+
+def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """从 raw Trace 独立重算事实，不依赖评测器 reasons。
+
+    重点解决两类盲区：
+    1. plan 文本明确规划调用工具，但实际 tool_calls 为空；
+    2. 评测器漏报 / 误报的可见差异（缺词、禁词、零工具违规、not_found）。
+    """
+    trace = ctx.get("trace")
+    result = ctx.get("result") or {}
+    case = ctx.get("case") or {}
+    answer = str(result.get("answer") or "")
+    tool_spans = collect_tool_spans(trace)
+    actual = []
+    for s in tool_spans:
+        if s.get("name"):
+            actual.append(str(s.get("name")))
+    for t in (result.get("actual_tools") or []):
+        if t not in actual:
+            actual.append(str(t))
+
+    signal = _plan_signal(trace)
+    plan_texts = signal.get("execution_plans") or []
+    intents = _extract_plan_tool_intents(plan_texts)
+    plan_names = [str(n) for n in (signal.get("tool_call_names") or [])]
+
+    plan_intent_mismatch = None
+    missing = [i for i in intents if i not in actual]
+    if intents and missing:
+        plan_intent_mismatch = {
+            "plan_intents": intents,
+            "actual_tools": actual,
+            "missing": missing,
+            "plan_tool_call_names": plan_names,
+            "note": "plan 文本明确规划调用工具，但实际工具调用缺失",
+        }
+    elif plan_names and not actual:
+        plan_intent_mismatch = {
+            "plan_intents": plan_names,
+            "actual_tools": actual,
+            "missing": plan_names,
+            "plan_tool_call_names": plan_names,
+            "note": "plan 已给出结构化 tool_call_names，但实际没有任何工具 span",
+        }
+
+    not_found_tools = []
+    error_tools = []
+    for s in tool_spans:
+        status = s.get("status")
+        item = {
+            "name": s.get("name"),
+            "args": s.get("tool_args") or {},
+            "status": status,
+        }
+        if status == "not_found":
+            not_found_tools.append(item)
+        elif status in {"error", "failed"}:
+            error_tools.append(item)
+
+    short = _short_circuit_answer(answer)
+
+    must_contain = case.get("must_contain") or []
+    must_not = case.get("must_not_contain") or []
+    must_contain_findings = []
+    for kw in must_contain:
+        if not kw:
+            continue
+        where = _find_where(kw, trace, answer)
+        must_contain_findings.append({
+            "keyword": kw,
+            "in_answer": where["final_answer"],
+            "in_tool_results": where["tool_results"],
+        })
+    forbidden_findings = []
+    for kw in must_not:
+        if not kw:
+            continue
+        forbidden_findings.append({
+            "keyword": kw,
+            "in_answer": kw in answer,
+            "in_tool_results": _find_where(kw, trace, answer)["tool_results"],
+        })
+
+    reasons_text = "\n".join(result.get("reasons") or [])
+    discrepancies: List[str] = []
+    for kw in must_contain:
+        if kw and kw not in answer and f"缺少必须包含：{kw}" not in reasons_text:
+            discrepancies.append(f"评测器未报“缺少必须包含：{kw}”")
+    for kw in must_not:
+        if kw and kw in answer and f"出现禁止包含：{kw}" not in reasons_text:
+            discrepancies.append(f"评测器未报“出现禁止包含：{kw}”")
+
+    if plan_intent_mismatch and "违反系统提示词" not in reasons_text:
+        discrepancies.append("plan 规划调用工具但实际未调用，评测器未标记系统提示词违规")
+    if not tool_spans and not signal.get("tool_skip_reason") and "违反系统提示词" not in reasons_text:
+        discrepancies.append("零工具调用且无 tool_skip_reason，评测器未标记系统提示词违规")
+    if not_found_tools and not any("未找到" in r or "not_found" in r.lower() for r in result.get("reasons") or []):
+        discrepancies.append(f"存在 {len(not_found_tools)} 个 not_found 工具，评测器 reasons 未体现")
+
+    summary_parts = []
+    if plan_intent_mismatch:
+        summary_parts.append(
+            "plan 文本规划调用 " + "、".join(plan_intent_mismatch["plan_intents"]) +
+            "，实际工具调用=" + (str(actual) if actual else "无") +
+            "；plan 结构化输出缺失"
+        )
+    if discrepancies:
+        summary_parts.append("评测器一致性差异：" + "；".join(discrepancies[:6]))
+    if not_found_tools:
+        summary_parts.append("not_found 工具：" + "、".join(str(x["name"]) for x in not_found_tools))
+    if short:
+        summary_parts.append(f"答案存在短路串：{short}")
+    if not summary_parts:
+        summary_parts.append("Trace 真相重算完成，未发现 plan 意图与工具调用的明确不一致")
+
+    return {
+        "actual_tools": actual,
+        "tool_count": len(tool_spans),
+        "plan_intents": intents,
+        "plan_tool_call_names": plan_names,
+        "plan_intent_mismatch": plan_intent_mismatch,
+        "not_found_tools": not_found_tools,
+        "error_tools": error_tools,
+        "answer_short_circuit": short,
+        "must_contain_findings": must_contain_findings,
+        "must_not_contain_findings": forbidden_findings,
+        "evaluator_discrepancies": discrepancies,
+        "trace_metadata": (trace or {}).get("metadata") or {},
+        "summary": "；".join(summary_parts),
+    }
 
 def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     """执行一条确定性检查单，返回结构化证据。此函数只能由编排器/LLM 调用，
@@ -532,6 +1044,11 @@ def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 f"tool_skip_reason={signal['tool_skip_reason']}"
             )
 
+        elif category == "trace_truth_audit":
+            audit = _trace_truth_audit(ctx)
+            data = audit
+            summary = audit.get("summary", "")
+
         elif category == "prompt_rule":
             data = {
                 "plan_tool_rule": get_tool_requirement_excerpt(project_path),
@@ -544,15 +1061,19 @@ def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
             where = _find_where(kw, trace, answer)
             probe = search_knowledge_base(project_path, f"{question} {kw}", top_k=5)
             kb_hit = kb_probe_contains(probe, kw)
+            raw_probe = raw_kb_contains(project_path, kw)
+            raw_hit = bool(raw_probe.get("ok") and (raw_probe.get("data") or {}).get("contains"))
             conclusion = keyword_retrieval_conclusion(kw, where, probe)
             data = {
                 "keyword": kw,
                 "where": where,
                 "kb_probe": probe,
                 "kb_hit": kb_hit,
+                "raw_probe": raw_probe,
+                "raw_hit": raw_hit,
                 "retrieval_conclusion": conclusion,
             }
-            summary = f"「{kw}」工具返回={where['tool_results']}，最终答案={where['final_answer']}，知识库检索命中={kb_hit}；{conclusion}"
+            summary = f"「{kw}」工具返回={where['tool_results']}，最终答案={where['final_answer']}，知识库检索命中={kb_hit}，原始数据命中={raw_hit}；{conclusion}"
 
         elif category == "forbidden_keyword":
             kw = params.get("keyword", "")
@@ -570,16 +1091,20 @@ def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
                     break
             probe = search_knowledge_base(project_path, first_arg or question, top_k=6)
             aliases = None
+            raw_probe = None
             if name == "query_character" and first_arg:
                 aliases = inspect_aliases(project_path, first_arg)
+            if first_arg:
+                raw_probe = raw_kb_contains(project_path, first_arg)
             data = {
                 "tool_name": name,
                 "tool_args": args,
                 "recheck_query": first_arg or question,
                 "kb_probe": probe,
                 "alias_probe": aliases,
+                "raw_probe": raw_probe,
             }
-            summary = f"复检 {name}({first_arg or '?'})：知识库检索与别名解析已完成"
+            summary = f"复检 {name}({first_arg or '?'})：知识库检索、原始数据扫描与别名解析已完成"
 
         elif category == "prompt_violation":
             signal = _plan_signal(trace)
@@ -697,7 +1222,7 @@ def llm_tool_definitions() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_system_prompt",
-                "description": "只读读取原项目系统提示词（plan/answer/tool_rule）。",
+                "description": "只读读取原项目系统提示词（plan/answer/tool_rule）。返回当前工作区版本及 git 元数据；注意该版本不一定等于 Trace 运行时的版本。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -719,6 +1244,20 @@ def llm_tool_definitions() -> List[Dict[str, Any]]:
                         "top_k": {"type": "integer", "description": "结果数，默认 6"},
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "inspect_raw_kb",
+                "description": "只读扫描原项目知识库原始数据文件（quests/roles/lore/npcs等），确认某个词是否真的在底层数据中。区别于 search_knowledge_base 的召回结果。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "keyword": {"type": "string", "description": "要扫描的关键词"},
+                    },
+                    "required": ["keyword"],
                 },
             },
         },
@@ -781,6 +1320,8 @@ def dispatch_llm_tool(
         return read_system_prompt(project_path, args.get("name", ""))
     if name == "search_knowledge_base":
         return search_knowledge_base(project_path, args.get("query", ""), int(args.get("top_k") or 6))
+    if name == "inspect_raw_kb":
+        return raw_kb_contains(project_path, args.get("keyword", ""))
     if name == "evidence_search":
         return evidence_search(
             args.get("query", ""),

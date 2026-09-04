@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.services.eval_store import get_run, import_golden_set, list_runs, list_test_cases
+from app.services.rate_limit import audit_rate_limit, diagnose_rate_limit
 from app.services.run_service import compare_runs, create_offline_run
 
 router = APIRouter(prefix="/api", tags=["eval"])
@@ -71,7 +72,7 @@ def get_diagnosis_result(run_id: str, case_id: str) -> Dict[str, Any]:
 
 
 @router.post("/runs/{run_id}/diagnose/{case_id}")
-def diagnose(run_id: str, case_id: str) -> Dict[str, Any]:
+def diagnose(run_id: str, case_id: str, _rate: None = Depends(diagnose_rate_limit)) -> Dict[str, Any]:
     from app.services.diagnoser import diagnose_run_case
     try:
         return diagnose_run_case(run_id, case_id)
@@ -90,6 +91,35 @@ def get_run_detail(run_id: str) -> Dict[str, Any]:
     if not data:
         raise HTTPException(status_code=404, detail="Run not found")
     return data
+
+
+@router.post("/runs/{run_id}/audit/{case_id}")
+def audit_case_endpoint(run_id: str, case_id: str, payload: Dict[str, Any] = None, _rate: None = Depends(audit_rate_limit)) -> Dict[str, Any]:
+    """对单个病例做轻量答案一致性审计（passed/failed 均可，通常跑 passed）。"""
+    from app.services.case_audit import audit_case
+    payload = payload or {}
+    try:
+        return audit_case(run_id, case_id, use_llm=bool(payload.get("use_llm", True)))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/runs/{run_id}/audit")
+def audit_run_endpoint(run_id: str, payload: Dict[str, Any] = None, _rate: None = Depends(audit_rate_limit)) -> Dict[str, Any]:
+    """批量审计一个 Run 的所有 passed 病例。"""
+    from app.services.case_audit import audit_run
+    payload = payload or {}
+    try:
+        return audit_run(run_id, use_llm=bool(payload.get("use_llm", True)), only_passed=bool(payload.get("only_passed", True)))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/runs/{run_id}/audit")
+def list_audits(run_id: str) -> Dict[str, Any]:
+    from app.services.eval_store import list_case_audits
+    items = list_case_audits(run_id)
+    return {"run_id": run_id, "count": len(items), "items": items}
 
 
 @router.get("/compare")

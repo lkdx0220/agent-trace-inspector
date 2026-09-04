@@ -9,9 +9,11 @@ from typing import Any, Dict, List
 import requests
 
 from app.db import get_trace
-from app.services.diagnoser import _api_key, _trace_summary
+from app.services.diagnoser import _trace_summary
+from app.services.qwen_client import get_qwen_endpoints
 from app.services.eval_store import get_run, save_report
 from app.services.evaluator import check_prompt_compliance, evaluate_keywords
+from app.services.path_guard import ensure_project_path
 from app.services.system_prompts import get_tool_requirement_excerpt
 from schemas.eval import TestCase
 
@@ -42,6 +44,10 @@ def generate_analysis_report(
     case_id: str,
     project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
 ) -> str:
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        raise ValueError(str(e))
     run = get_run(run_id)
     if not run:
         raise ValueError("Run not found")
@@ -174,31 +180,36 @@ def generate_analysis_report(
   - Agent 问题 / 题目设置问题 / 知识库数据问题
 注意：不要给修改建议，只做分析。"""
 
-    api_key = _api_key(project_path)
-    if not api_key:
-        return "缺少 DASHSCOPE_API_KEY"
+    api_keys = get_qwen_endpoints(project_path)
+    if not api_keys:
+        return "缺少 Qwen API Key"
 
-    try:
-        resp = requests.post(
-            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "qwen3.7-max",
-                "messages": [
-                    {"role": "system", "content": "你是严格的 Agent 运行分析报告撰写者，只输出报告正文，不输出 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.1,
-            },
-            timeout=180,
-        )
-        if resp.status_code != 200:
-            return f"LLM 调用失败: {resp.status_code} {resp.text[:200]}"
-        report_text = resp.json()["choices"][0]["message"]["content"].strip()
-        save_report(run_id, case_id, report_text)
-        return report_text
-    except Exception as e:
-        return f"报告生成失败: {e}"
+    errors = []
+    for ep in api_keys:
+        base_url = str(ep.get("base_url") or "").rstrip("/")
+        url = base_url + "/chat/completions"
+        try:
+            resp = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {ep.get('api_key')}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "qwen3.7-max",
+                    "messages": [
+                        {"role": "system", "content": "你是严格的 Agent 运行分析报告撰写者，只输出报告正文，不输出 JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.1,
+                },
+                timeout=180,
+            )
+            if resp.status_code == 200:
+                report_text = resp.json()["choices"][0]["message"]["content"].strip()
+                save_report(run_id, case_id, report_text)
+                return report_text
+            errors.append(f"[{ep.get('source','?')}] {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            errors.append(repr(e))
+    return "LLM 调用失败: " + " | ".join(errors)

@@ -156,3 +156,29 @@ API：
 - `app/services/doctor_tools.py`：只读工具 + `run_lab_check`（知识库检索走子进程，不 import 原项目）
 - `app/services/coverage_gate.py`：覆盖闸门与证据链校验
 - `app/services/project_doctor.py`：主循环（qwen function calling + 自动补齐检查）
+
+## 版本快照、限流与 passed 轻量审计
+
+### 历史 Trace 防污染
+
+- `app/services/source_snapshot.py`：导出 Trace 时记录原项目关键提示词/代码文件的 SHA256 与 git 状态（`prompts/system/agent_system_v4_plan.txt`、`agent_system_v4_answer.txt`、`app/agent/nodes.py`、`app/agent/executor.py`、`app/retrieval.py`、`app/tools/query.py`、`character_aliases.py`）。
+- `schemas/trace.py` 新增 `source_snapshot` 字段；`exporter/genshin_exporter.py` 的 `build_trace_from_result(..., project_path=...)` 会写入。
+- 医生诊断时会比较 Trace 快照与当前工作区（`trace_snapshot_status`），只有提示词快照一致时才允许把“当前提示词规则”当作 Trace 运行时的规则；无快照的旧 Trace 只能以“当前视角”分析，不能断言历史违规。
+
+### 限流
+
+- `app/services/rate_limit.py`：进程内滑动窗口。
+- 已接入：`doctor` 5 次/60s、`diagnose` 10 次/60s、`import trace` 30 次/60s、`audit` 10 次/60s。
+
+### passed 病例轻量审计
+
+- `app/services/case_audit.py`：对已经 `passed` 的题目做低价质量复核：
+  - 确定性 4-gram Jaccard / 参考答案包含度 / 关键词覆盖 / 长度比，综合分 < 0.5 或答案含“未找到/当前知识库未收录”短路串会标为 `weak/suspicious`；
+  - 可选轻量 LLM（`deepseek-v4-flash`，关闭思考）输出 `strong/partial/weak/contradicts/unverifiable`。
+- 存储到 `case_audits` 表，用于发现“通过但答案质量不高”的可疑通过。
+
+API：
+
+- `POST /api/runs/{run_id}/audit/{case_id}`：审计单题（body 可传 `{"use_llm": false}` 关闭 LLM）
+- `POST /api/runs/{run_id}/audit`：批量审计一个 Run 的 passed 题
+- `GET /api/runs/{run_id}/audit`：读取已保存的审计结果
