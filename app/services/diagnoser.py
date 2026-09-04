@@ -12,21 +12,14 @@ import requests
 from app.db import get_trace
 from app.services.eval_store import get_diagnosis, get_run, list_test_cases, save_diagnosis
 from app.services.evaluator import check_prompt_compliance
+from app.services.path_guard import ensure_project_path
+from app.services.qwen_client import get_qwen_endpoints
 from app.services.system_prompts import get_tool_requirement_excerpt
 
 
-def _api_key(project_path: Optional[str] = None) -> str:
-    env = os.environ.get("DASHSCOPE_API_KEY", "")
-    if env:
-        return env
-    if project_path:
-        env_file = Path(project_path) / ".env"
-        if env_file.exists():
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line.startswith("DASHSCOPE_API_KEY="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return ""
+def _api_keys(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """返回 Qwen 接口配置（含 base_url）列表；主新 Key 优先，旧 DASHSCOPE 兜底。"""
+    return get_qwen_endpoints(project_path)
 
 
 def _trace_summary(trace: Dict[str, Any]) -> str:
@@ -54,6 +47,10 @@ def diagnose_run_case(
     case_id: str,
     project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
 ) -> Dict[str, Any]:
+    try:
+        ensure_project_path(project_path)
+    except ValueError as e:
+        raise ValueError(str(e))
     run = get_run(run_id)
     if not run:
         raise ValueError("Run not found")
@@ -109,40 +106,45 @@ def diagnose_run_case(
 }}
 """
 
-    api_key = _api_key(project_path)
-    if not api_key:
+    api_keys = _api_keys(project_path)
+    if not api_keys:
         return {"error": "缺少 DASHSCOPE_API_KEY"}
 
-    try:
-        resp = requests.post(
-            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "qwen3.7-max",
-                "messages": [
-                    {"role": "system", "content": "你是严格的 Agent 运行诊断助手，只输出 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.1,
-            },
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            return {"error": f"LLM 调用失败: {resp.status_code} {resp.text[:200]}"}
-        content = resp.json()["choices"][0]["message"]["content"]
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            diag = json.loads(content[start:end])
-            save_diagnosis(run_id, case_id, result.get("trace_id") or "", diag, prompt)
-            diag["prompt"] = prompt
-            return diag
-        diag = {"root_cause": content, "evidence": [], "suggestion": "", "confidence": 0}
-        save_diagnosis(run_id, case_id, result.get("trace_id") or "", diag, prompt)
-        diag["prompt"] = prompt
-        return diag
-    except Exception as e:
-        return {"error": f"诊断失败: {e}"}
+    errors = []
+    for ep in api_keys:
+        base_url = str(ep.get("base_url") or "").rstrip("/")
+        url = base_url + "/chat/completions"
+        try:
+            resp = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {ep.get('api_key')}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "qwen3.7-max",
+                    "messages": [
+                        {"role": "system", "content": "你是严格的 Agent 运行诊断助手，只输出 JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.1,
+                },
+                timeout=120,
+            )
+            if resp.status_code == 200:
+                content = resp.json()["choices"][0]["message"]["content"]
+                start = content.find("{")
+                end = content.rfind("}") + 1
+                if start >= 0 and end > start:
+                    diag = json.loads(content[start:end])
+                    save_diagnosis(run_id, case_id, result.get("trace_id") or "", diag, prompt)
+                    diag["prompt"] = prompt
+                    return diag
+                diag = {"root_cause": content, "evidence": [], "suggestion": "", "confidence": 0}
+                save_diagnosis(run_id, case_id, result.get("trace_id") or "", diag, prompt)
+                diag["prompt"] = prompt
+                return diag
+            errors.append(f"[{ep.get('source','?')}] {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            errors.append(repr(e))
+    return {"error": "LLM 调用失败: " + " | ".join(errors)}

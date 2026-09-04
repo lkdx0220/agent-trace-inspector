@@ -15,6 +15,28 @@ let clickGuard = false;
 let selectingRange = false;
 let selectionStartX = 0;
 
+function sanitizeHtml(html, allowEvents = false) {
+  const text = String(html == null ? '' : html);
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  doc.querySelectorAll('script,style,iframe,object,embed,link,meta,base,svg,math,form').forEach(n => n.remove());
+  doc.querySelectorAll('*').forEach(n => {
+    for (const attr of Array.from(n.attributes)) {
+      const name = attr.name.toLowerCase();
+      const value = (attr.value || '').trim().toLowerCase();
+      if (!allowEvents && name.startsWith('on')) {
+        n.removeAttribute(attr.name);
+        continue;
+      }
+      if (name === 'srcdoc' || value.startsWith('javascript:') || value.startsWith('data:text/html')) {
+        n.removeAttribute(attr.name);
+      }
+    }
+  });
+  return doc.body.innerHTML;
+}
+
+
+
 function switchView(mode) {
   viewMode = mode;
   document.getElementById('navTraces').classList.toggle('active', mode==='traces');
@@ -26,11 +48,11 @@ async function renderRunsList() {
   const res = await fetch('/api/runs');
   const runs = await res.json();
   const box = document.getElementById('traceList');
-  box.innerHTML = runs.map(r => `
+  box.innerHTML=sanitizeHtml(runs.map(r => `
     <div class="trace-item ${currentRun && currentRun.run_id===r.run_id ? 'active' : ''}" onclick="selectRun('${r.run_id}')">
       <div class="q">${escapeHtml(r.name || r.run_id)}</div>
       <div class="meta"><span class="badge found">${r.summary.passed_cases ?? 0}/${r.summary.total_cases ?? 0}</span><span>${formatMs(r.summary.avg_duration_ms)}</span></div>
-    </div>`).join('') || '<div style="color:var(--muted);padding:16px">暂无 Run</div>';
+    </div>`).join('') || '<div style="color:var(--muted);padding:16px">暂无 Run</div>', true);
 }
 
 async function selectRun(runId) {
@@ -44,10 +66,10 @@ async function selectRun(runId) {
 function renderRunOverview(run) {
   document.getElementById('traceTitle').textContent = run.name || run.run_id;
   const s = run.summary || {};
-  document.getElementById('traceMeta').innerHTML = `
+  document.getElementById('traceMeta').innerHTML=sanitizeHtml(`
     <span>通过 ${s.passed_cases ?? 0}/${s.total_cases ?? 0}</span>
     <span>通过率 ${s.pass_rate ?? 0}%</span>
-    <span>平均耗时 ${formatMs(s.avg_duration_ms)}</span>`;
+    <span>平均耗时 ${formatMs(s.avg_duration_ms)}</span>`, true);
   const rows = (run.results || []).map(r => `
     <tr>
       <td>${escapeHtml(r.case_id)}</td>
@@ -57,7 +79,7 @@ function renderRunOverview(run) {
       <td><button class="tab" onclick="openRunReport('${run.run_id}','${r.case_id}')">报告</button></td>
       <td>${r.passed ? '<span style="color:var(--muted)">—</span>' : `<button class="tab doctor" onclick="openRunDoctor('${run.run_id}','${r.case_id}')">🩺 医生</button>`}</td>
     </tr>`).join('');
-  document.getElementById('content').innerHTML = `
+  document.getElementById('content').innerHTML=sanitizeHtml(`
     <div class="run-overview">
       <div class="metrics-grid">
         <div class="metric-card"><div class="metric-value">${s.total_cases ?? 0}</div><div class="metric-label">总题数</div></div>
@@ -67,7 +89,7 @@ function renderRunOverview(run) {
       </div>
       <h3>题目结果</h3>
       <table><tr><th>题号</th><th>结果</th><th>题目</th><th>Trace</th><th>报告</th><th>医生</th></tr>${rows}</table>
-    </div>`;
+    </div>`, true);
 }
 
 async function openRunReport(runId, caseId) {
@@ -80,14 +102,14 @@ async function openRunReport(runId, caseId) {
   }
   if (d.report_html) {
     const box = document.getElementById('content');
-    box.innerHTML = `<h2>${escapeHtml(caseId)} 运行分析报告</h2><div class="report-html">${d.report_html}</div><button class="tab" onclick="selectRun('${runId}')">返回</button>`;
+    box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 运行分析报告</h2><div class="report-html">${d.report_html}</div><button class="tab" onclick="selectRun('${runId}')">返回</button>`, false);
   }
 }
 
 
 async function openRunDoctor(runId, caseId) {
   const box = document.getElementById('content');
-  box.innerHTML = `<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">正在执行强制检查单（可能需要 1~3 分钟，期间会只读调用原项目知识库检索）……</div>`;
+  box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">正在执行强制检查单（可能需要 1~3 分钟，期间会只读调用原项目知识库检索）……</div>`, true);
   try {
     let res = await fetch(`/api/runs/${runId}/doctor/${caseId}`);
     let d;
@@ -103,7 +125,7 @@ async function openRunDoctor(runId, caseId) {
     }
     renderDoctorView(runId, caseId, d.payload || d);
   } catch (e) {
-    box.innerHTML = `<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">请求失败：${escapeHtml(e)}</div><button class="tab" onclick="selectRun('${runId}')">返回</button>`;
+    box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">请求失败：${escapeHtml(e)}</div><button class="tab" onclick="selectRun('${runId}')">返回</button>`, true);
   }
 }
 
@@ -132,7 +154,7 @@ function renderDoctorView(runId, caseId, d) {
   const evidenceDigest = d.evidence_by_order || {};
   const evRows = Object.entries(evidenceDigest).map(([oid, evs]) => `
     <tr><td><code>${escapeHtml(oid)}</code></td><td>${(evs || []).map(e => escapeHtml(e.summary || e.status || '')).join('<br>')}</td></tr>`).join('');
-  box.innerHTML = `
+  box.innerHTML=sanitizeHtml(`
     <div class="doctor-view">
       <div class="diagnosis-head">
         <h2>${escapeHtml(caseId)} 项目医生诊断</h2>
@@ -160,7 +182,7 @@ function renderDoctorView(runId, caseId, d) {
       ${(d.verified_claims || []).map(c => `<div class="doctor-memory"><code>${escapeHtml(c.id)}</code> ${escapeHtml(c.claim)} <span class="muted">证据: ${(c.evidence_ids || []).map(x => `<code>${escapeHtml(x)}</code>`).join(' ')}</span></div>`).join('') || ''}
       ${(d.pinned_facts || []).map(f => `<div class="doctor-memory"><code>${escapeHtml(f.id)}</code> ${escapeHtml(f.text)} <span class="muted">证据: <code>${escapeHtml(f.evidence_id)}</code></span></div>`).join('') || ''}
       ${(!d.verified_claims || !d.verified_claims.length) && (!d.pinned_facts || !d.pinned_facts.length) ? '<div class="empty">（无长期记忆记录）</div>' : ''}
-    </div>`;
+    </div>`, true);
 }
 
 async function loadTestCases() {
@@ -178,7 +200,7 @@ function renderList() {
   const q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
   const box = document.getElementById('traceList');
   const filtered = traces.filter(t => (t.question || '').toLowerCase().includes(q));
-  box.innerHTML = filtered.map(t => `
+  box.innerHTML=sanitizeHtml(filtered.map(t => `
     <div class="trace-item ${currentTrace && currentTrace.trace_id === t.trace_id ? 'active' : ''}" onclick="selectTrace('${t.trace_id}')">
       <div class="q">${escapeHtml(t.question || '')}</div>
       <div class="meta">
@@ -189,7 +211,7 @@ function renderList() {
         <span>${escapeHtml((t.created_at || '').slice(5, 16))}</span>
       </div>
     </div>
-  `).join('') || '<div style="color:var(--muted);padding:16px">暂无 Trace</div>';
+  `).join('') || '<div style="color:var(--muted);padding:16px">暂无 Trace</div>', true);
 }
 
 async function selectTrace(id) {
@@ -211,7 +233,7 @@ function renderTrace(t) {
   document.getElementById('traceTitle').textContent = t.question || t.trace_id;
   const intent = (t.metadata && t.metadata.intent_labels || []).join(', ');
   const m = currentMetrics || {};
-  document.getElementById('traceMeta').innerHTML = `
+  document.getElementById('traceMeta').innerHTML=sanitizeHtml(`
     <span class="badge ${t.metadata && t.metadata.execution_mode === 'L1' ? 'l1' : 'l2'}">${t.metadata && t.metadata.execution_mode || '?'}</span>
     <span class="badge ${t.metadata && t.metadata.response_mode === 'found' ? 'found' : 'not_found'}">${t.metadata && t.metadata.response_mode || ''}</span>
     ${intent ? `<span class="badge l2">${escapeHtml(intent)}</span>` : ''}
@@ -220,7 +242,7 @@ function renderTrace(t) {
     <span>未找到 ${m.not_found_count ?? 0}</span>
     <span>拦截 ${m.intercepted_count ?? 0}</span>
     ${m.meltdown_count ? `<span class="badge not_found">熔断 ${m.meltdown_count}</span>` : ''}
-  `;
+  `, true);
   const timelineHtml = `
     <div class="span-card">
       <div class="span-header">
@@ -231,7 +253,7 @@ function renderTrace(t) {
     </div>
     <div class="tree">${(t.root_span.children || []).map(s => renderSpan(s, 0)).join('')}</div>
   `;
-  document.getElementById('content').innerHTML = `
+  document.getElementById('content').innerHTML=sanitizeHtml(`
     <div class="tabs">
       <button class="tab ${currentTab === 'answers' ? 'active' : ''}" onclick="setTab('answers')">答案</button>
       <button class="tab ${currentTab === 'timeline' ? 'active' : ''}" onclick="setTab('timeline')">时间线</button>
@@ -242,7 +264,7 @@ function renderTrace(t) {
     <div id="tabChart" style="${currentTab === 'chart' ? '' : 'display:none'}">${renderChart(t)}</div>
     <div id="tabMetrics" style="${currentTab === 'metrics' ? '' : 'display:none'}">${renderMetricsTab(m)}</div>
     <div id="tabAnswers" style="${currentTab === 'answers' ? '' : 'display:none'}">${renderAnswersTab(t)}</div>
-  `;
+  `, true);
   bindToggle();
   bindChartWheel();
 }
@@ -489,7 +511,7 @@ function getFullRange() {
 function updateChartView() {
   const host = document.getElementById('tabChart');
   if (host && currentTrace) {
-    host.innerHTML = renderChart(currentTrace);
+    host.innerHTML=sanitizeHtml(renderChart(currentTrace), true);
     bindChartWheel();
   }
 }
@@ -714,9 +736,9 @@ async function triggerDiagnosis(traceId, caseId) {
     if (d.error) {
       box.textContent = d.error;
     } else if (d.report_html) {
-      box.innerHTML = `<div class="report-html">${d.report_html}</div>`;
+      box.innerHTML=sanitizeHtml(`<div class="report-html">${d.report_html}</div>`, false);
     } else if (d.report) {
-      box.innerHTML = `<pre class="report-pre">${escapeHtml(d.report)}</pre>`;
+      box.innerHTML=sanitizeHtml(`<pre class="report-pre">${escapeHtml(d.report)}</pre>`, true);
     } else {
       box.textContent = '生成报告失败：' + JSON.stringify(d);
     }
@@ -827,10 +849,10 @@ function openFullToolResult(spanId) {
     drawer.className = 'tool-drawer';
     document.body.appendChild(drawer);
   }
-  drawer.innerHTML = `
+  drawer.innerHTML=sanitizeHtml(`
     <div class="tool-drawer-head"><strong>${escapeHtml(span.name || '工具')} · 完整返回</strong><button class="close-detail" onclick="closeToolDrawer()">×</button></div>
     <pre class="tool-drawer-body">${escapeHtml(span.result_full || '')}</pre>
-  `;
+  `, true);
   drawer.classList.add('open');
 }
 

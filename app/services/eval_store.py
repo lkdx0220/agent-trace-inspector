@@ -63,6 +63,19 @@ def _ensure_tables(conn) -> None:
             created_at TEXT,
             UNIQUE(run_id, case_id)
         );
+
+        CREATE TABLE IF NOT EXISTS case_audits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            case_id TEXT NOT NULL,
+            question TEXT,
+            passed INTEGER,
+            verdict TEXT,
+            score REAL,
+            details TEXT,
+            created_at TEXT,
+            UNIQUE(run_id, case_id)
+        );
         """
     )
     try:
@@ -407,5 +420,75 @@ def get_prescription(run_id: str, case_id: str) -> Optional[Dict[str, Any]]:
             "created_at": row["created_at"],
             "payload": json.loads(row["payload_json"] or "{}"),
         }
+    finally:
+        conn.close()
+
+
+def save_case_audit(record: Dict[str, Any]) -> None:
+    conn = get_conn()
+    try:
+        _ensure_tables(conn)
+        conn.execute(
+            """
+            INSERT INTO case_audits
+            (run_id, case_id, question, passed, verdict, score, details, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, case_id) DO UPDATE SET
+              question=excluded.question,
+              passed=excluded.passed,
+              verdict=excluded.verdict,
+              score=excluded.score,
+              details=excluded.details,
+              created_at=excluded.created_at
+            """,
+            (
+                record.get("run_id", ""),
+                record.get("case_id", ""),
+                record.get("question", ""),
+                1 if record.get("passed") else 0,
+                record.get("verdict", ""),
+                float(record.get("score") or 0.0),
+                json.dumps(record.get("details") or {}, ensure_ascii=False),
+                record.get("created_at") or datetime.now().isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_case_audit(run_id: str, case_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        _ensure_tables(conn)
+        row = conn.execute(
+            "SELECT run_id, case_id, question, passed, verdict, score, details, created_at FROM case_audits WHERE run_id=? AND case_id=?",
+            (run_id, case_id),
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["passed"] = bool(d.get("passed"))
+        d["details"] = json.loads(d.pop("details") or "{}")
+        return d
+    finally:
+        conn.close()
+
+
+def list_case_audits(run_id: str) -> List[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        _ensure_tables(conn)
+        rows = conn.execute(
+            "SELECT run_id, case_id, question, passed, verdict, score, details, created_at FROM case_audits WHERE run_id=? ORDER BY case_id",
+            (run_id,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["passed"] = bool(d.get("passed"))
+            d["details"] = json.loads(d.pop("details") or "{}")
+            out.append(d)
+        return out
     finally:
         conn.close()

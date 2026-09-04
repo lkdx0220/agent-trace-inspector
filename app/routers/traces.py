@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Any, Dict, List
 
 from app.db import get_trace, get_timeline, list_traces, save_trace
 from app.services.metrics import compute_trace_metrics
+from app.services.rate_limit import import_rate_limit
 from schemas.trace import Trace
 
 router = APIRouter(prefix="/api/traces", tags=["traces"])
 
 
 @router.post("/import")
-def import_trace(trace: Trace) -> Dict[str, Any]:
+def import_trace(trace: Trace, _rate: None = Depends(import_rate_limit)) -> Dict[str, Any]:
     """导入一条 Trace JSON（直接请求体，也接受 Trace 模型）。"""
     save_trace(trace)
     return {

@@ -93,6 +93,19 @@ class TraceMetadata(BaseModel):
     run_id: Optional[str] = None
 
 
+class SourceSnapshot(BaseModel):
+    """Trace 生成时原项目源码/提示词快照。
+
+    用于后续医生/评估器判断：当前工作区代码是否仍是 Trace 运行时的版本。
+    缺少该字段的旧 Trace 不应被当作“当前代码已生效”来判定历史违规。
+    """
+    captured_at: Optional[datetime] = None
+    git_commit: Optional[str] = None
+    git_dirty: Optional[bool] = None
+    dirty_files: List[str] = Field(default_factory=list)
+    file_hashes: Dict[str, str] = Field(default_factory=dict)
+
+
 class Trace(BaseModel):
     schema_version: Literal["0.1"] = SCHEMA_VERSION
     trace_id: str
@@ -101,6 +114,7 @@ class Trace(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     duration_ms: Optional[int] = None
     metadata: TraceMetadata = Field(default_factory=TraceMetadata)
+    source_snapshot: Optional[SourceSnapshot] = None
     root_span: Span
     trace_events: Optional[List[Dict[str, Any]]] = None
 
