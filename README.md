@@ -182,3 +182,18 @@ API：
 - `POST /api/runs/{run_id}/audit/{case_id}`：审计单题（body 可传 `{"use_llm": false}` 关闭 LLM）
 - `POST /api/runs/{run_id}/audit`：批量审计一个 Run 的 passed 题
 - `GET /api/runs/{run_id}/audit`：读取已保存的审计结果
+
+## Golden Test Runner（tools/run_golden_test.py）
+
+- 独立跑测工具：每题独立子进程执行原项目 Agent → 收集回答/工具返回 → RAGAS 四维 + 关键词 + 引用核对 → 输出 HTML 报告。
+- 默认工作区是 inspector 仓库的上一级目录；目录结构不同时用 `GOLDEN_TEST_WORKSPACE` 指定。
+- 关键行为：
+  - Judge 不可用（缺 Key/网络/HTTP/格式错误）会记录 `judge_valid=false`，不再静默变成低分；
+  - 答案/上下文/参考答案以 `<<<BEGIN_UNTRUSTED_*>>>` 数据块交给 Judge，并做分隔标记防伪造；
+  - 单题超时由父进程 kill 子进程，避免遗留线程；
+  - 缓存带 `schema_version`、`question_sha256`、`content_digest` 校验；
+  - 结果缓存到 `<工作区>/golden_test_results/`。
+- 用法：
+  - `python tools/run_golden_test.py`
+  - `python tools/run_golden_test.py --force`
+  - `python tools/run_golden_test.py --ids=R1,R2`
