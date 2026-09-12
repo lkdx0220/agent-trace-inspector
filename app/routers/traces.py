@@ -3,11 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import Any, Dict, List
 
 from app.db import get_trace, get_timeline, list_traces, save_trace
+from app.services.auth import require_local_or_token
 from app.services.metrics import compute_trace_metrics
 from app.services.rate_limit import import_rate_limit
 from schemas.trace import Trace
 
-router = APIRouter(prefix="/api/traces", tags=["traces"])
+router = APIRouter(prefix="/api/traces", tags=["traces"], dependencies=[Depends(require_local_or_token)])
 
 
 @router.post("/import")

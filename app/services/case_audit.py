@@ -4,7 +4,7 @@
 目标：评估器只保证“关键词/路由/工具”通过，但“通过”不一定代表答案质量好。
 本模块对 passed 病例做低价复核：
 1. 确定性相似度：4-gram Jaccard / 参考答案包含度 / 关键词覆盖 / 长度比；
-2. 可选轻量 LLM（deepseek-v4-flash）比对实际答案与参考答案，输出强弱判断；
+2. 可选轻量 LLM（deepseek-flash）比对实际答案与参考答案，输出强弱判断；
 3. 记录到 case_audits 表，供批量查看“可疑通过”。
 """
 from __future__ import annotations
@@ -25,8 +25,10 @@ from app.services.eval_store import (
     save_case_audit,
 )
 from app.services.evaluator import _deepseek_key
+from app.services.qwen_client import is_allowed_llm_endpoint
 
-AUDIT_MODEL = "deepseek-v4-flash"
+AUDIT_MODEL = "deepseek-flash"
+AUDIT_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
 LLM_TIMEOUT = 60
 
 
@@ -95,6 +97,8 @@ def _llm_audit(question: str, answer: str, reference: str) -> Optional[Dict[str,
     key = _deepseek_key()
     if not key:
         return None
+    if not is_allowed_llm_endpoint(AUDIT_ENDPOINT):
+        return None
     prompt = f"""你是答案一致性轻量评审。请比较【实际答案】与【参考答案】，判断实际答案是否真的覆盖了参考答案的核心内容。
 
 只输出 JSON，不要其他文字，格式：
@@ -129,7 +133,7 @@ def _llm_audit(question: str, answer: str, reference: str) -> Optional[Dict[str,
     for payload in payloads:
         try:
             resp = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
+                AUDIT_ENDPOINT,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json=payload,
                 timeout=LLM_TIMEOUT,

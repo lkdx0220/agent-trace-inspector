@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.services.path_guard import ensure_project_path
+from app.services.subprocess_env import build_child_env
 
 PROMPT_FILES = [
     "prompts/system/agent_system_v4_plan.txt",
@@ -62,6 +63,7 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
         r = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=str(project_path), capture_output=True, text=True, timeout=10,
+            env=build_child_env(),
         )
         if r.returncode == 0:
             info["git_commit"] = r.stdout.strip()
@@ -71,6 +73,7 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
         r = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=str(project_path), capture_output=True, text=True, timeout=10,
+            env=build_child_env(),
         )
         if r.returncode == 0:
             lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]

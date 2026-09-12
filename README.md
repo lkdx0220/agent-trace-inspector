@@ -174,7 +174,7 @@ API：
 
 - `app/services/case_audit.py`：对已经 `passed` 的题目做低价质量复核：
   - 确定性 4-gram Jaccard / 参考答案包含度 / 关键词覆盖 / 长度比，综合分 < 0.5 或答案含“未找到/当前知识库未收录”短路串会标为 `weak/suspicious`；
-  - 可选轻量 LLM（`deepseek-v4-flash`，关闭思考）输出 `strong/partial/weak/contradicts/unverifiable`。
+  - 可选轻量 LLM（`deepseek-flash`，关闭思考）输出 `strong/partial/weak/contradicts/unverifiable`。
 - 存储到 `case_audits` 表，用于发现“通过但答案质量不高”的可疑通过。
 
 API：

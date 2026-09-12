@@ -13,7 +13,7 @@ from app.db import get_trace
 from app.services.eval_store import get_diagnosis, get_run, list_test_cases, save_diagnosis
 from app.services.evaluator import check_prompt_compliance
 from app.services.path_guard import ensure_project_path
-from app.services.qwen_client import get_qwen_endpoints
+from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
 from app.services.system_prompts import get_tool_requirement_excerpt
 
 
@@ -48,7 +48,7 @@ def diagnose_run_case(
     project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
 ) -> Dict[str, Any]:
     try:
-        ensure_project_path(project_path)
+        project_path = str(ensure_project_path(project_path))
     except ValueError as e:
         raise ValueError(str(e))
     run = get_run(run_id)
@@ -113,6 +113,9 @@ def diagnose_run_case(
     errors = []
     for ep in api_keys:
         base_url = str(ep.get("base_url") or "").rstrip("/")
+        if not is_allowed_llm_endpoint(base_url):
+            errors.append(f"[{ep.get('source','?')}] endpoint 不在白名单，已拒绝")
+            continue
         url = base_url + "/chat/completions"
         try:
             resp = requests.post(
@@ -144,7 +147,7 @@ def diagnose_run_case(
                 save_diagnosis(run_id, case_id, result.get("trace_id") or "", diag, prompt)
                 diag["prompt"] = prompt
                 return diag
-            errors.append(f"[{ep.get('source','?')}] {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            errors.append(repr(e))
+            errors.append(f"[{ep.get('source','?')}] HTTP {resp.status_code}")
+        except Exception:
+            errors.append(f"[{ep.get('source','?')}] 请求异常")
     return {"error": "LLM 调用失败: " + " | ".join(errors)}

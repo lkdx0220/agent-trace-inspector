@@ -4,18 +4,24 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.services.auth import require_local_or_token
 from app.services.doctor_tools import DEFAULT_PROJECT_PATH
 from app.services.eval_store import get_prescription, save_prescription
+from app.services.path_guard import ensure_project_path
 from app.services.rate_limit import doctor_rate_limit
 from app.services.project_doctor import prescribe_run_case
 
-router = APIRouter(prefix="/api", tags=["doctor"])
+router = APIRouter(prefix="/api", tags=["doctor"], dependencies=[Depends(require_local_or_token)])
 
 
 @router.post("/runs/{run_id}/doctor/{case_id}")
 def run_doctor(run_id: str, case_id: str, payload: Optional[Dict[str, Any]] = None, _rate: None = Depends(doctor_rate_limit)) -> Dict[str, Any]:
     payload = payload or {}
     project_path = payload.get("project_path") or DEFAULT_PROJECT_PATH
+    try:
+        project_path = str(ensure_project_path(project_path))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     model = payload.get("model")
     try:
         out = prescribe_run_case(run_id, case_id, project_path=project_path, model=model)

@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
+from exporter.safe_paths import ensure_project_path_local, ensure_trace_out_path, redact_sensitive
 from schemas.trace import (
     AgentInfo,
     SourceSnapshot,
@@ -40,14 +41,15 @@ MELTDOWN_TRIGGER_TOOLS = {"load_book_content", "load_quest_content", "find_first
 
 
 def _load_agent_module(project_path: Path):
-    """动态加载原神剧情助手入口，避免修改原项目。"""
-    entry = Path(project_path) / "genshin_story_agent.py"
+    """动态加载原神剧情助手入口；project_path 必须通过固定根目录校验。"""
+    root = ensure_project_path_local(project_path)
+    entry = root / "genshin_story_agent.py"
     if not entry.exists():
         raise FileNotFoundError(f"未找到原项目入口：{entry}")
 
     # 让原项目的 app / intent_router / character_aliases 等顶层模块可以被 import
-    if str(project_path) not in sys.path:
-        sys.path.insert(0, str(project_path))
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
 
     spec = importlib.util.spec_from_file_location("genshin_story_agent_inspector", entry)
     module = importlib.util.module_from_spec(spec)
@@ -370,7 +372,12 @@ def _enrich_trace_with_events(trace: Trace, events: list) -> None:
 
         elif span.span_type == SpanType.REWRITE and by_event.get("rewrite"):
             span.end_time = _dt.fromtimestamp(by_event["rewrite"][0]["timestamp"]).astimezone()
-            span.start_time = trace.created_at
+            if by_event.get("rewrite_start"):
+                # 用 rewrite_start 事件作为真实起点，避免把进程导入/知识库加载
+                # 等初始化时间算进 rewrite_query 阶段。
+                span.start_time = _dt.fromtimestamp(by_event["rewrite_start"][-1]["timestamp"]).astimezone()
+            else:
+                span.start_time = trace.created_at
         elif span.span_type == SpanType.ASSESS and by_event.get("assess"):
             span.end_time = _dt.fromtimestamp(by_event["assess"][0]["timestamp"]).astimezone()
         elif span.span_type == SpanType.ROUTER and by_event.get("route"):
@@ -511,6 +518,7 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
 
 def run_and_export(project_path: Path, question: str, out_path: Path, context: str = "") -> Trace:
     started_at = datetime.now().astimezone()
+    out_path = ensure_trace_out_path(out_path)
     module = _load_agent_module(project_path)
 
     # 启用原项目可选 Trace Hook（默认关闭，这里由导出器开启）
@@ -547,7 +555,7 @@ def run_and_export(project_path: Path, question: str, out_path: Path, context: s
     _fill_assess_router_times(trace, events)
     trace.trace_events = events
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(trace.to_json(), encoding="utf-8")
+    out_path.write_text(redact_sensitive(trace.to_json()), encoding="utf-8")
     print(f"[Trace] 已导出：{out_path}")
     print(f"[Trace] 最终回答：{result.get('final_response', '')[:80]}")
     return trace
@@ -561,7 +569,9 @@ def main():
     parser.add_argument("--context", default="", help="上一轮对话上下文（可选）")
     args = parser.parse_args()
 
-    run_and_export(Path(args.project_path), args.question, Path(args.out), args.context)
+    project_path = ensure_project_path_local(args.project_path)
+    out_path = ensure_trace_out_path(args.out)
+    run_and_export(project_path, args.question, out_path, args.context)
 
 
 if __name__ == "__main__":

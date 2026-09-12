@@ -15,6 +15,7 @@ from app.db import save_trace
 from app.services.eval_store import list_test_cases, save_run
 from app.services.evaluator import compute_run_summary, evaluate_trace_for_case
 from app.services.path_guard import ensure_project_path
+from app.services.subprocess_env import build_child_env
 from schemas.eval import RunRecord, TestCase
 from schemas.trace import Trace
 
@@ -22,16 +23,8 @@ INSPECTOR_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _env_with_keys(project_path: Path) -> Dict[str, str]:
-    env = os.environ.copy()
-    env_file = Path(project_path) / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip().strip('"').strip("'")
-    return env
+    """给 exporter 子进程构造最小环境：系统白名单 + 项目必要的 LLM Key。"""
+    return build_child_env(str(project_path), include_project_keys=True)
 
 
 def _export_one(project_path: Path, question: str, out_path: Path, context: str = "", timeout: int = 360) -> Optional[Trace]:
@@ -68,7 +61,7 @@ def _export_one(project_path: Path, question: str, out_path: Path, context: str 
 
 def run_live(project_path: str, case_ids: List[str], run_name: str = "实时评测") -> RunRecord:
     try:
-        ensure_project_path(project_path)
+        project_path = str(ensure_project_path(project_path))
     except ValueError as e:
         raise ValueError(str(e))
     project = Path(project_path)
@@ -103,7 +96,7 @@ def run_live(project_path: str, case_ids: List[str], run_name: str = "实时评�
             results.append(RunCaseResult(case_id=case_obj.case_id, question=case_obj.question, passed=False, reasons=["导出 Trace 失败"]))
             continue
         save_trace(trace)
-        results.append(evaluate_trace_for_case(case_obj, trace.model_dump()))
+        results.append(evaluate_trace_for_case(case_obj, trace.model_dump(), project_path=str(project)))
 
     summary = compute_run_summary(results)
     record = RunRecord(

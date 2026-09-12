@@ -15,21 +15,48 @@ let clickGuard = false;
 let selectingRange = false;
 let selectionStartX = 0;
 
-function sanitizeHtml(html, allowEvents = false) {
+function sanitizeHtml(html) {
+  // 统一净化入口：无论来源是内部模板还是后端报告，都移除事件属性和危险 URL。
   const text = String(html == null ? '' : html);
   const doc = new DOMParser().parseFromString(text, 'text/html');
-  doc.querySelectorAll('script,style,iframe,object,embed,link,meta,base,svg,math,form').forEach(n => n.remove());
+  const blockedTags = 'script,style,iframe,object,embed,link,meta,base,svg,math,form,frame,frameset';
+  doc.querySelectorAll(blockedTags).forEach(n => n.remove());
+  const urlAttrs = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster']);
+  const dangerousScheme = /^(?:javascript|vbscript):/i;
+  const dangerousData = /^data:/i;
   doc.querySelectorAll('*').forEach(n => {
     for (const attr of Array.from(n.attributes)) {
       const name = attr.name.toLowerCase();
-      const value = (attr.value || '').trim().toLowerCase();
-      if (!allowEvents && name.startsWith('on')) {
+      const value = (attr.value || '').trim();
+      const normalized = value.replace(/[\u0000-\u0020\u00a0]+/g, '').toLowerCase();
+      if (name.startsWith('on')) {
         n.removeAttribute(attr.name);
         continue;
       }
-      if (name === 'srcdoc' || value.startsWith('javascript:') || value.startsWith('data:text/html')) {
+      if (name === 'srcdoc') {
+        n.removeAttribute(attr.name);
+        continue;
+      }
+      if (urlAttrs.has(name) && (dangerousScheme.test(normalized) || dangerousData.test(normalized))) {
         n.removeAttribute(attr.name);
       }
+    }
+  });
+  return doc.body.innerHTML;
+}
+
+function sanitizeReportHtml(html) {
+  // 报告正文用更严格的白名单：去掉样式/ID/class 等属性，只保留安全链接。
+  const doc = new DOMParser().parseFromString(sanitizeHtml(html), 'text/html');
+  doc.querySelectorAll('*').forEach(n => {
+    for (const attr of Array.from(n.attributes)) {
+      const name = attr.name.toLowerCase();
+      const value = (attr.value || '').trim();
+      const hrefOk = /^#/.test(value) || /^\/(?!\/)/.test(value) || /^https?:\/\//i.test(value) || /^mailto:/i.test(value);
+      if (name === 'href' && hrefOk) {
+        continue;
+      }
+      n.removeAttribute(attr.name);
     }
   });
   return doc.body.innerHTML;
@@ -49,10 +76,10 @@ async function renderRunsList() {
   const runs = await res.json();
   const box = document.getElementById('traceList');
   box.innerHTML=sanitizeHtml(runs.map(r => `
-    <div class="trace-item ${currentRun && currentRun.run_id===r.run_id ? 'active' : ''}" onclick="selectRun('${r.run_id}')">
+    <div class="trace-item ${currentRun && currentRun.run_id===r.run_id ? 'active' : ''}" data-action="select-run" data-run-id="${escapeHtml(r.run_id)}">
       <div class="q">${escapeHtml(r.name || r.run_id)}</div>
       <div class="meta"><span class="badge found">${r.summary.passed_cases ?? 0}/${r.summary.total_cases ?? 0}</span><span>${formatMs(r.summary.avg_duration_ms)}</span></div>
-    </div>`).join('') || '<div style="color:var(--muted);padding:16px">暂无 Run</div>', true);
+    </div>`).join('') || '<div style="color:var(--muted);padding:16px">暂无 Run</div>');
 }
 
 async function selectRun(runId) {
@@ -69,15 +96,15 @@ function renderRunOverview(run) {
   document.getElementById('traceMeta').innerHTML=sanitizeHtml(`
     <span>通过 ${s.passed_cases ?? 0}/${s.total_cases ?? 0}</span>
     <span>通过率 ${s.pass_rate ?? 0}%</span>
-    <span>平均耗时 ${formatMs(s.avg_duration_ms)}</span>`, true);
+    <span>平均耗时 ${formatMs(s.avg_duration_ms)}</span>`);
   const rows = (run.results || []).map(r => `
     <tr>
       <td>${escapeHtml(r.case_id)}</td>
       <td>${r.passed ? '✅' : '❌'}</td>
       <td>${escapeHtml((r.question || '').slice(0, 50))}</td>
-      <td>${r.trace_id ? `<a href="javascript:void(0)" onclick="selectTrace('${r.trace_id}')">详情</a>` : '无Trace'}</td>
-      <td><button class="tab" onclick="openRunReport('${run.run_id}','${r.case_id}')">报告</button></td>
-      <td>${r.passed ? '<span style="color:var(--muted)">—</span>' : `<button class="tab doctor" onclick="openRunDoctor('${run.run_id}','${r.case_id}')">🩺 医生</button>`}</td>
+      <td>${r.trace_id ? `<a href="#" data-action="select-trace" data-trace-id="${escapeHtml(r.trace_id)}">详情</a>` : '无Trace'}</td>
+      <td><button class="tab" data-action="open-run-report" data-run-id="${escapeHtml(run.run_id)}" data-case-id="${escapeHtml(r.case_id)}">报告</button></td>
+      <td>${r.passed ? '<span style="color:var(--muted)">—</span>' : `<button class="tab doctor" data-action="open-run-doctor" data-run-id="${escapeHtml(run.run_id)}" data-case-id="${escapeHtml(r.case_id)}">医生</button>`}</td>
     </tr>`).join('');
   document.getElementById('content').innerHTML=sanitizeHtml(`
     <div class="run-overview">
@@ -89,7 +116,7 @@ function renderRunOverview(run) {
       </div>
       <h3>题目结果</h3>
       <table><tr><th>题号</th><th>结果</th><th>题目</th><th>Trace</th><th>报告</th><th>医生</th></tr>${rows}</table>
-    </div>`, true);
+    </div>`);
 }
 
 async function openRunReport(runId, caseId) {
@@ -102,14 +129,14 @@ async function openRunReport(runId, caseId) {
   }
   if (d.report_html) {
     const box = document.getElementById('content');
-    box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 运行分析报告</h2><div class="report-html">${d.report_html}</div><button class="tab" onclick="selectRun('${runId}')">返回</button>`, false);
+    box.innerHTML=sanitizeReportHtml(`<h2>${escapeHtml(caseId)} 运行分析报告</h2><div class="report-html">${d.report_html}</div><button class="tab" data-action="select-run" data-run-id="${escapeHtml(runId)}">返回</button>`);
   }
 }
 
 
 async function openRunDoctor(runId, caseId) {
   const box = document.getElementById('content');
-  box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">正在执行强制检查单（可能需要 1~3 分钟，期间会只读调用原项目知识库检索）……</div>`, true);
+  box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">正在执行强制检查单（可能需要 1~3 分钟，期间会只读调用原项目知识库检索）……</div>`);
   try {
     let res = await fetch(`/api/runs/${runId}/doctor/${caseId}`);
     let d;
@@ -125,7 +152,7 @@ async function openRunDoctor(runId, caseId) {
     }
     renderDoctorView(runId, caseId, d.payload || d);
   } catch (e) {
-    box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">请求失败：${escapeHtml(e)}</div><button class="tab" onclick="selectRun('${runId}')">返回</button>`, true);
+    box.innerHTML=sanitizeHtml(`<h2>${escapeHtml(caseId)} 项目医生诊断</h2><div class="diag-result">请求失败：${escapeHtml(e)}</div><button class="tab" data-action="select-run" data-run-id="${escapeHtml(runId)}">返回</button>`);
   }
 }
 
@@ -158,7 +185,7 @@ function renderDoctorView(runId, caseId, d) {
     <div class="doctor-view">
       <div class="diagnosis-head">
         <h2>${escapeHtml(caseId)} 项目医生诊断</h2>
-        <button class="tab" onclick="selectRun('${runId}')">返回</button>
+        <button class="tab" data-action="select-run" data-run-id="${escapeHtml(runId)}">返回</button>
       </div>
       <div class="metrics-grid">
         <div class="metric-card"><div class="metric-value">${cov.completed_orders ?? 0}/${cov.total_orders ?? 0}</div><div class="metric-label">检查单覆盖</div></div>
@@ -182,7 +209,7 @@ function renderDoctorView(runId, caseId, d) {
       ${(d.verified_claims || []).map(c => `<div class="doctor-memory"><code>${escapeHtml(c.id)}</code> ${escapeHtml(c.claim)} <span class="muted">证据: ${(c.evidence_ids || []).map(x => `<code>${escapeHtml(x)}</code>`).join(' ')}</span></div>`).join('') || ''}
       ${(d.pinned_facts || []).map(f => `<div class="doctor-memory"><code>${escapeHtml(f.id)}</code> ${escapeHtml(f.text)} <span class="muted">证据: <code>${escapeHtml(f.evidence_id)}</code></span></div>`).join('') || ''}
       ${(!d.verified_claims || !d.verified_claims.length) && (!d.pinned_facts || !d.pinned_facts.length) ? '<div class="empty">（无长期记忆记录）</div>' : ''}
-    </div>`, true);
+    </div>`);
 }
 
 async function loadTestCases() {
@@ -201,7 +228,7 @@ function renderList() {
   const box = document.getElementById('traceList');
   const filtered = traces.filter(t => (t.question || '').toLowerCase().includes(q));
   box.innerHTML=sanitizeHtml(filtered.map(t => `
-    <div class="trace-item ${currentTrace && currentTrace.trace_id === t.trace_id ? 'active' : ''}" onclick="selectTrace('${t.trace_id}')">
+    <div class="trace-item ${currentTrace && currentTrace.trace_id === t.trace_id ? 'active' : ''}" data-action="select-trace" data-trace-id="${escapeHtml(t.trace_id)}">
       <div class="q">${escapeHtml(t.question || '')}</div>
       <div class="meta">
         <span class="trace-id">${escapeHtml((t.trace_id || '').slice(-8))}</span>
@@ -211,7 +238,7 @@ function renderList() {
         <span>${escapeHtml((t.created_at || '').slice(5, 16))}</span>
       </div>
     </div>
-  `).join('') || '<div style="color:var(--muted);padding:16px">暂无 Trace</div>', true);
+  `).join('') || '<div style="color:var(--muted);padding:16px">暂无 Trace</div>');
 }
 
 async function selectTrace(id) {
@@ -242,7 +269,7 @@ function renderTrace(t) {
     <span>未找到 ${m.not_found_count ?? 0}</span>
     <span>拦截 ${m.intercepted_count ?? 0}</span>
     ${m.meltdown_count ? `<span class="badge not_found">熔断 ${m.meltdown_count}</span>` : ''}
-  `, true);
+  `);
   const timelineHtml = `
     <div class="span-card">
       <div class="span-header">
@@ -255,16 +282,16 @@ function renderTrace(t) {
   `;
   document.getElementById('content').innerHTML=sanitizeHtml(`
     <div class="tabs">
-      <button class="tab ${currentTab === 'answers' ? 'active' : ''}" onclick="setTab('answers')">答案</button>
-      <button class="tab ${currentTab === 'timeline' ? 'active' : ''}" onclick="setTab('timeline')">时间线</button>
-      <button class="tab ${currentTab === 'chart' ? 'active' : ''}" onclick="setTab('chart')">耗时图</button>
-      <button class="tab ${currentTab === 'metrics' ? 'active' : ''}" onclick="setTab('metrics')">指标</button>
+      <button class="tab ${currentTab === 'answers' ? 'active' : ''}" data-action="set-tab" data-tab="answers">答案</button>
+      <button class="tab ${currentTab === 'timeline' ? 'active' : ''}" data-action="set-tab" data-tab="timeline">时间线</button>
+      <button class="tab ${currentTab === 'chart' ? 'active' : ''}" data-action="set-tab" data-tab="chart">耗时图</button>
+      <button class="tab ${currentTab === 'metrics' ? 'active' : ''}" data-action="set-tab" data-tab="metrics">指标</button>
     </div>
     <div id="tabTimeline" style="${currentTab === 'timeline' ? '' : 'display:none'}">${timelineHtml}</div>
     <div id="tabChart" style="${currentTab === 'chart' ? '' : 'display:none'}">${renderChart(t)}</div>
     <div id="tabMetrics" style="${currentTab === 'metrics' ? '' : 'display:none'}">${renderMetricsTab(m)}</div>
     <div id="tabAnswers" style="${currentTab === 'answers' ? '' : 'display:none'}">${renderAnswersTab(t)}</div>
-  `, true);
+  `);
   bindToggle();
   bindChartWheel();
 }
@@ -314,7 +341,7 @@ function renderChart(t) {
       const width = Math.max(0.5, ((en - st) / total * 100)).toFixed(3);
       const label = s.name || s.span_type;
       const active = selectedSpan && selectedSpan.span_id === s.span_id;
-      return `<div class="chart-bar ${g.color} ${active ? 'selected' : ''}" data-span-id="${escapeHtml(s.span_id)}" style="left:${left}%;width:${width}%" title="${escapeHtml(label)} ${formatMs(en-st)}" onclick="selectSpan('${escapeHtml(s.span_id)}')">
+      return `<div class="chart-bar ${g.color} ${active ? 'selected' : ''}" data-span-id="${escapeHtml(s.span_id)}" style="left:${left}%;width:${width}%" title="${escapeHtml(label)} ${formatMs(en-st)}" data-action="select-span">
         <span class="bar-label">${escapeHtml(label)}</span>
       </div>`;
     }).join('');
@@ -342,8 +369,8 @@ function renderChart(t) {
         <span><i class="dot tools"></i> Tools</span>
         <span><i class="dot phase"></i> 阶段</span>
         <span><i class="dot agent"></i> Agent</span>
-        <button class="tab" onclick="resetChartZoom()">重置缩放</button>
-        <button class="tab" onclick="clearSelection()">清除选区</button>
+        <button class="tab" data-action="reset-chart-zoom">重置缩放</button>
+        <button class="tab" data-action="clear-selection">清除选区</button>
         <span class="zoom-hint">滚轮缩放 · 拖动平移 · Shift+拖动选择区间 · 点击空白关闭详情</span>
       </div>
       <div class="chart">
@@ -360,7 +387,7 @@ function renderChart(t) {
         <div class="detail-sidebar">
           <div class="detail-head">
             <span>节点详情</span>
-            <button class="close-detail" onclick="clearSelection()">×</button>
+            <button class="close-detail" data-action="clear-selection">×</button>
           </div>
           ${detailHtml}
         </div>` : ''}
@@ -511,7 +538,7 @@ function getFullRange() {
 function updateChartView() {
   const host = document.getElementById('tabChart');
   if (host && currentTrace) {
-    host.innerHTML=sanitizeHtml(renderChart(currentTrace), true);
+    host.innerHTML=sanitizeHtml(renderChart(currentTrace));
     bindChartWheel();
   }
 }
@@ -699,7 +726,7 @@ function renderAnswersTab(t) {
       <div class="answer-block">
         <div class="diagnosis-head">
           <div class="panel-title">AI 诊断</div>
-          <button class="tab" id="diagBtn" onclick="triggerDiagnosis('${escapeHtml(t.trace_id)}', '${escapeHtml(caseInfo.case_id)}')">🔍 诊断</button>
+          <button class="tab" id="diagBtn" data-action="trigger-diagnosis" data-trace-id="${escapeHtml(t.trace_id)}" data-case-id="${escapeHtml(caseInfo.case_id)}">诊断</button>
         </div>
         <div id="diagResult" class="diag-result">点击“诊断”后，AI 会分析这条 Trace 并解释为什么没通过。</div>
       </div>` : ''}
@@ -736,9 +763,9 @@ async function triggerDiagnosis(traceId, caseId) {
     if (d.error) {
       box.textContent = d.error;
     } else if (d.report_html) {
-      box.innerHTML=sanitizeHtml(`<div class="report-html">${d.report_html}</div>`, false);
+      box.innerHTML=sanitizeReportHtml(`<div class="report-html">${d.report_html}</div>`);
     } else if (d.report) {
-      box.innerHTML=sanitizeHtml(`<pre class="report-pre">${escapeHtml(d.report)}</pre>`, true);
+      box.innerHTML=sanitizeHtml(`<pre class="report-pre">${escapeHtml(d.report)}</pre>`);
     } else {
       box.textContent = '生成报告失败：' + JSON.stringify(d);
     }
@@ -802,7 +829,7 @@ function renderSpan(span, depth) {
   const children = (span.children || []).map(c => renderSpan(c, depth + 1)).join('');
   return `
     <div class="span-card" data-span-id="${span.span_id}">
-      <div class="span-header" onclick="toggleBody(this)">
+      <div class="span-header" data-action="toggle-body">
         <div class="span-icon ${span.span_type}">${icon}</div>
         <div class="span-name">${escapeHtml(span.name)}</div>
         <div class="waterfall"><div class="bar" style="width:${Math.min(100, barWidth)}%"></div></div>
@@ -824,7 +851,7 @@ function toolBody(span) {
   return `
     <div class="label">工具参数</div>
     <pre>${escapeHtml(args || '{}')}</pre>
-    <div class="label">返回 ${span.result_length != null ? span.result_length + ' 字' : ''} ${span.meltdown_trigger ? '· 熔断触发' : ''} ${span.result_full ? `<button class="tab" onclick="openFullToolResult('${escapeHtml(span.span_id)}')">查看完整返回</button>` : ''}</div>
+    <div class="label">返回 ${span.result_length != null ? span.result_length + ' 字' : ''} ${span.meltdown_trigger ? '· 熔断触发' : ''} ${span.result_full ? `<button class="tab" data-action="open-full-tool-result">查看完整返回</button>` : ''}</div>
     <pre>${escapeHtml((span.result_preview || '').slice(0, 1000))}</pre>
   `;
 }
@@ -850,9 +877,9 @@ function openFullToolResult(spanId) {
     document.body.appendChild(drawer);
   }
   drawer.innerHTML=sanitizeHtml(`
-    <div class="tool-drawer-head"><strong>${escapeHtml(span.name || '工具')} · 完整返回</strong><button class="close-detail" onclick="closeToolDrawer()">×</button></div>
+    <div class="tool-drawer-head"><strong>${escapeHtml(span.name || '工具')} · 完整返回</strong><button class="close-detail" data-action="close-tool-drawer">×</button></div>
     <pre class="tool-drawer-body">${escapeHtml(span.result_full || '')}</pre>
-  `, true);
+  `);
   drawer.classList.add('open');
 }
 
@@ -885,6 +912,38 @@ function renderEvents(t) {
     return `<div class="event-row"><span class="event-type">${escapeHtml(ev.event)}</span><span>${escapeHtml(JSON.stringify(d).slice(0, 300))}</span></div>`;
   }).join('')}</div>`;
 }
+
+document.addEventListener('click', function (event) {
+  const el = event.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.dataset.action;
+  if (action === 'select-run') {
+    selectRun(el.dataset.runId);
+  } else if (action === 'select-trace') {
+    event.preventDefault();
+    selectTrace(el.dataset.traceId);
+  } else if (action === 'open-run-report') {
+    openRunReport(el.dataset.runId, el.dataset.caseId);
+  } else if (action === 'open-run-doctor') {
+    openRunDoctor(el.dataset.runId, el.dataset.caseId);
+  } else if (action === 'set-tab') {
+    setTab(el.dataset.tab);
+  } else if (action === 'select-span') {
+    selectSpan(el.dataset.spanId);
+  } else if (action === 'reset-chart-zoom') {
+    resetChartZoom();
+  } else if (action === 'clear-selection') {
+    clearSelection();
+  } else if (action === 'trigger-diagnosis') {
+    triggerDiagnosis(el.dataset.traceId, el.dataset.caseId);
+  } else if (action === 'open-full-tool-result') {
+    openFullToolResult(el.dataset.spanId);
+  } else if (action === 'close-tool-drawer') {
+    closeToolDrawer();
+  } else if (action === 'toggle-body') {
+    toggleBody(el);
+  }
+});
 
 function setTab(tab) {
   currentTab = tab;

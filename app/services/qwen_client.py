@@ -13,6 +13,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+from app.services.path_guard import ensure_project_path
 
 INSPECTOR_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_PROJECT_PATH = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
@@ -20,8 +23,24 @@ DEFAULT_PROJECT_PATH = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助
 QWEN_PRIMARY_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 QWEN_FALLBACK_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+# 只允许把 API Key 发往这些已知厂商域名。
+ALLOWED_LLM_HOSTS = {
+    "token-plan.cn-beijing.maas.aliyuncs.com",
+    "dashscope.aliyuncs.com",
+    "api.deepseek.com",
+}
+
 _PRIMARY_KEY_NAMES = ("QWEN_API_KEY", "DASHSCOPE_PRIMARY_API_KEY")
 _FALLBACK_KEY_NAMES = ("DASHSCOPE_API_KEY", "DASHSCOPE_FALLBACK_API_KEY")
+
+
+def is_allowed_llm_endpoint(base_url: str) -> bool:
+    """仅允许 https 且 host 在已知厂商白名单内的 LLM endpoint。"""
+    try:
+        parsed = urlparse(str(base_url or ""))
+    except Exception:
+        return False
+    return parsed.scheme == "https" and (parsed.hostname or "") in ALLOWED_LLM_HOSTS
 
 
 def _read_env_file(path: Path) -> Dict[str, str]:
@@ -58,6 +77,12 @@ def get_qwen_endpoints(project_path: Optional[str] = None) -> List[Dict[str, Any
 
     每个元素：{"base_url": ..., "api_key": ..., "source": "primary"/"fallback"}
     """
+    if project_path:
+        try:
+            project_path = str(ensure_project_path(project_path))
+        except ValueError:
+            project_path = None
+
     endpoints: List[Dict[str, Any]] = []
     seen_keys: set = set()
 
@@ -65,23 +90,42 @@ def get_qwen_endpoints(project_path: Optional[str] = None) -> List[Dict[str, Any
         key = _lookup(name, project_path)
         if key and key not in seen_keys:
             seen_keys.add(key)
-            endpoints.append({
-                "base_url": QWEN_PRIMARY_BASE_URL,
-                "api_key": key,
-                "source": "primary",
-            })
+            if is_allowed_llm_endpoint(QWEN_PRIMARY_BASE_URL):
+                endpoints.append({
+                    "base_url": QWEN_PRIMARY_BASE_URL,
+                    "api_key": key,
+                    "source": "primary",
+                })
             break
 
     for name in _FALLBACK_KEY_NAMES:
         key = _lookup(name, project_path)
         if key and key not in seen_keys:
             seen_keys.add(key)
-            endpoints.append({
-                "base_url": QWEN_FALLBACK_BASE_URL,
-                "api_key": key,
-                "source": "fallback",
-            })
+            if is_allowed_llm_endpoint(QWEN_FALLBACK_BASE_URL):
+                endpoints.append({
+                    "base_url": QWEN_FALLBACK_BASE_URL,
+                    "api_key": key,
+                    "source": "fallback",
+                })
     return endpoints
+
+
+def get_deepseek_api_key(project_path: Optional[str] = None) -> str:
+    """读取 DeepSeek Key：环境变量 > inspector 本地 .env > 已校验的原项目 .env。"""
+    key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if key:
+        return key
+    local = _read_env_file(INSPECTOR_ROOT / ".env").get("DEEPSEEK_API_KEY", "")
+    if local:
+        return local
+    if project_path:
+        try:
+            root = ensure_project_path(project_path)
+        except ValueError:
+            return ""
+        return _read_env_file(root / ".env").get("DEEPSEEK_API_KEY", "")
+    return ""
 
 
 def mask_key(key: str) -> str:

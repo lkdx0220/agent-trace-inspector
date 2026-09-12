@@ -3,11 +3,13 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.services.auth import require_local_or_token
 from app.services.eval_store import get_run, import_golden_set, list_runs, list_test_cases
+from app.services.path_guard import ensure_project_path
 from app.services.rate_limit import audit_rate_limit, diagnose_rate_limit
 from app.services.run_service import compare_runs, create_offline_run
 
-router = APIRouter(prefix="/api", tags=["eval"])
+router = APIRouter(prefix="/api", tags=["eval"], dependencies=[Depends(require_local_or_token)])
 
 
 @router.get("/testcases")
@@ -30,9 +32,19 @@ def run_offline(name: str = "离线评测") -> Dict[str, Any]:
 @router.post("/runs/live")
 def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
     from app.services.live_runner import run_live
+    project_path = payload.get("project_path", "")
+    try:
+        project_path = str(ensure_project_path(project_path))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    case_ids = payload.get("case_ids", [])
+    if not isinstance(case_ids, list) or not all(isinstance(x, str) for x in case_ids):
+        raise HTTPException(status_code=400, detail="case_ids 必须是字符串数组")
+    if len(case_ids) > 100:
+        raise HTTPException(status_code=400, detail="case_ids 数量超过上限")
     record = run_live(
-        project_path=payload.get("project_path", ""),
-        case_ids=payload.get("case_ids", []),
+        project_path=project_path,
+        case_ids=case_ids,
         run_name=payload.get("name", "实时评测"),
     )
     return record.model_dump()
@@ -40,7 +52,9 @@ def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _md_to_html(text: str) -> str:
     import markdown
-    return markdown.markdown(text or "", extensions=["tables", "fenced_code", "nl2br"])
+    from app.services.html_sanitizer import sanitize_html
+    rendered = markdown.markdown(text or "", extensions=["tables", "fenced_code", "nl2br"])
+    return sanitize_html(rendered)
 
 
 @router.get("/runs/{run_id}/report/{case_id}")

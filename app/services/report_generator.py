@@ -10,7 +10,7 @@ import requests
 
 from app.db import get_trace
 from app.services.diagnoser import _trace_summary
-from app.services.qwen_client import get_qwen_endpoints
+from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
 from app.services.eval_store import get_run, save_report
 from app.services.evaluator import check_prompt_compliance, evaluate_keywords
 from app.services.path_guard import ensure_project_path
@@ -45,7 +45,7 @@ def generate_analysis_report(
     project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
 ) -> str:
     try:
-        ensure_project_path(project_path)
+        project_path = str(ensure_project_path(project_path))
     except ValueError as e:
         raise ValueError(str(e))
     run = get_run(run_id)
@@ -83,6 +83,7 @@ def generate_analysis_report(
             match_mode=(case or {}).get("match_mode", "all"),
             alternatives=alternatives,
         ),
+        project_path=project_path,
     )
     missing = kw_result["miss"]
     forbidden_in_answer = kw_result["violations"]
@@ -187,6 +188,9 @@ def generate_analysis_report(
     errors = []
     for ep in api_keys:
         base_url = str(ep.get("base_url") or "").rstrip("/")
+        if not is_allowed_llm_endpoint(base_url):
+            errors.append(f"[{ep.get('source','?')}] endpoint 不在白名单，已拒绝")
+            continue
         url = base_url + "/chat/completions"
         try:
             resp = requests.post(
@@ -209,7 +213,7 @@ def generate_analysis_report(
                 report_text = resp.json()["choices"][0]["message"]["content"].strip()
                 save_report(run_id, case_id, report_text)
                 return report_text
-            errors.append(f"[{ep.get('source','?')}] {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            errors.append(repr(e))
+            errors.append(f"[{ep.get('source','?')}] HTTP {resp.status_code}")
+        except Exception:
+            errors.append(f"[{ep.get('source','?')}] 请求异常")
     return "LLM 调用失败: " + " | ".join(errors)

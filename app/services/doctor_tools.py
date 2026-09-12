@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.services.path_guard import ensure_project_path
+from app.services.subprocess_env import build_child_env
 from app.services.system_prompts import (
     get_answer_system_prompt,
     get_plan_system_prompt,
@@ -99,17 +100,9 @@ def _short_circuit_answer(answer: str) -> Optional[str]:
 # 原项目只读探查（子进程）
 # ============================================================
 
-def _load_env(project_path: Path) -> Dict[str, str]:
-    env = os.environ.copy()
-    env_file = project_path / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip().strip('"').strip("'")
-    return env
+def _load_env(project_path: Path, include_project_keys: bool = False) -> Dict[str, str]:
+    """最小子进程环境；只有需要联网的探针才注入原项目 .env 中的 Key。"""
+    return build_child_env(str(project_path), include_project_keys=include_project_keys)
 
 
 def _run_probe(
@@ -117,12 +110,14 @@ def _run_probe(
     code: str,
     timeout: int = 240,
     payload: Optional[Dict[str, Any]] = None,
+    include_project_keys: bool = False,
 ) -> Dict[str, Any]:
     """运行一段只读 Python 探针。
 
     安全设计：用户/题目相关内容通过独立的 JSON payload 文件传给子进程，
     不再拼接到 Python 源码中，避免“代码注入/命令注入”。
     """
+    project_path = ensure_project_path(str(project_path))
     tmp_dir = INSPECTOR_ROOT / "data" / "tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     probe_file = tmp_dir / f"doctor_probe_{uuid.uuid4().hex}.py"
@@ -154,7 +149,7 @@ def _run_probe(
         result = subprocess.run(
             cmd,
             cwd=str(project_path),
-            env=_load_env(project_path),
+            env=_load_env(project_path, include_project_keys=include_project_keys),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -251,7 +246,7 @@ def search_knowledge_base(project_path: str, query: str, top_k: int = 6) -> Dict
         "    except Exception as e:\n"
         "        out['queries'][q] = 'ERROR: ' + repr(e)\n"
     )
-    return _run_probe(Path(project_path), code, payload=payload)
+    return _run_probe(Path(project_path), code, payload=payload, include_project_keys=True)
 
 
 def raw_kb_contains(project_path: str, keyword: str) -> Dict[str, Any]:
@@ -264,50 +259,31 @@ def raw_kb_contains(project_path: str, keyword: str) -> Dict[str, Any]:
         ensure_project_path(project_path)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
+    payload = {
+        "project_path": str(Path(project_path)),
+        "keyword": str(keyword),
+        "targets": RAW_KB_TARGETS,
+    }
     code = (
         "import os\n"
-        "import sys, os, json\n"
-        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
-        + "sys.path.insert(0, PROJECT)\n"
-        + "os.chdir(PROJECT)\n"
-        + "keyword = " + json.dumps(str(keyword), ensure_ascii=False) + "\n"
-        + "targets = [\n"
-        "    'content_data/quests_processed.json',\n"
-        "    'content_data/quests_主线.json',\n"
-        "    'content_data/quests_传说任务.json',\n"
-        "    'content_data/quests_世界任务.json',\n"
-        "    'content_data/quests_魔神任务.json',\n"
-        "    'content_data/quests_活动活动.json',\n"
-        "    'content_data/quests_其他任务.json',\n"
-        "    'content_data/quests_彩蛋剧情.json',\n"
-        "    'content_data/quests_地图事件.json',\n"
-        "    'content_data/quests_委托任务.json',\n"
-        "    'content_data/quests_部族纪闻.json',\n"
-        "    'content_data/quests_游逸旅闻.json',\n"
-        "    'content_data/lore.json',\n"
-        "    'content_data/concepts.json',\n"
-        "    'content_data/npcs_processed.json',\n"
-        "    'content_data/npcs_wiki_details.json',\n"
-        "    'genshin_knowledge_base/roles.py',\n"
-        "    'genshin_knowledge_base/quests.py',\n"
-        "    'genshin_knowledge_base/main_story.py',\n"
-        "    'genshin_knowledge_base/regions.py',\n"
-        "]\n"
-        + "hits = []\n"
-        + "for rel in targets:\n"
-        + "    p = os.path.join(PROJECT, rel)\n"
-        + "    if not os.path.exists(p):\n"
-        + "        continue\n"
-        + "    try:\n"
-        + "        with open(p, 'r', encoding='utf-8', errors='replace') as f:\n"
-        + "            text = f.read()\n"
-        + "        if keyword in text:\n"
-        + "            hits.append(rel)\n"
-        + "    except Exception:\n"
-        + "        continue\n"
-        + "out = {'keyword': keyword, 'contains': bool(hits), 'hits': hits}\n"
+        "PROJECT = PAYLOAD['project_path']\n"
+        "keyword = PAYLOAD['keyword']\n"
+        "targets = PAYLOAD['targets']\n"
+        "hits = []\n"
+        "for rel in targets:\n"
+        "    p = os.path.join(PROJECT, rel)\n"
+        "    if not os.path.exists(p):\n"
+        "        continue\n"
+        "    try:\n"
+        "        with open(p, 'r', encoding='utf-8', errors='replace') as f:\n"
+        "            text = f.read()\n"
+        "        if keyword in text:\n"
+        "            hits.append(rel)\n"
+        "    except Exception:\n"
+        "        continue\n"
+        "out = {'keyword': keyword, 'contains': bool(hits), 'hits': hits}\n"
     )
-    return _run_probe(Path(project_path), code)
+    return _run_probe(Path(project_path), code, payload=payload)
 
 
 def inspect_aliases(project_path: str, term: str) -> Dict[str, Any]:
@@ -345,20 +321,25 @@ def knowledge_probe_batch(project_path: str, queries: List[str], top_k: int = 5,
     queries = [str(q) for q in (queries or []) if str(q).strip()]
     if not queries:
         return {"ok": True, "data": {"queries": {}}}
+    payload = {
+        "project_path": str(Path(project_path)),
+        "queries": queries,
+        "top_k": int(top_k),
+    }
     code = (
-        "import sys, os, json\n"
-        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
-        + "sys.path.insert(0, PROJECT)\n"
-        + "os.chdir(PROJECT)\n"
-        + "from app.retrieval import hybrid_search\n"
-        + "out = {'queries': {}}\n"
-        + "for q in " + json.dumps(queries, ensure_ascii=False) + ":\n"
-        + "    try:\n"
-        + "        out['queries'][q] = hybrid_search.invoke({'query': q, 'top_k': " + str(int(top_k)) + "})\n"
-        + "    except Exception as e:\n"
-        + "        out['queries'][q] = 'ERROR: ' + repr(e)\n"
+        "import sys, os\n"
+        "PROJECT = PAYLOAD['project_path']\n"
+        "sys.path.insert(0, PROJECT)\n"
+        "os.chdir(PROJECT)\n"
+        "from app.retrieval import hybrid_search\n"
+        "out = {'queries': {}}\n"
+        "for q in PAYLOAD['queries']:\n"
+        "    try:\n"
+        "        out['queries'][q] = hybrid_search.invoke({'query': q, 'top_k': PAYLOAD['top_k']})\n"
+        "    except Exception as e:\n"
+        "        out['queries'][q] = 'ERROR: ' + repr(e)\n"
     )
-    return _run_probe(Path(project_path), code, timeout=timeout)
+    return _run_probe(Path(project_path), code, timeout=timeout, payload=payload, include_project_keys=True)
 
 
 RAW_KB_TARGETS = [
@@ -394,29 +375,32 @@ def raw_kb_contains_multi(project_path: str, keywords: List[str], timeout: int =
     keywords = [str(k) for k in (keywords or []) if str(k).strip()]
     if not keywords:
         return {"ok": True, "data": {}}
+    payload = {
+        "project_path": str(Path(project_path)),
+        "keywords": keywords,
+        "targets": RAW_KB_TARGETS,
+    }
     code = (
-        "import sys, os, json\n"
-        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
-        + "sys.path.insert(0, PROJECT)\n"
-        + "os.chdir(PROJECT)\n"
-        + "keywords = " + json.dumps(keywords, ensure_ascii=False) + "\n"
-        + "targets = " + json.dumps(RAW_KB_TARGETS, ensure_ascii=False) + "\n"
-        + "texts = {}\n"
-        + "for rel in targets:\n"
-        + "    p = os.path.join(PROJECT, rel)\n"
-        + "    if not os.path.exists(p):\n"
-        + "        continue\n"
-        + "    try:\n"
-        + "        with open(p, 'r', encoding='utf-8', errors='replace') as f:\n"
-        + "            texts[rel] = f.read()\n"
-        + "    except Exception:\n"
-        + "        continue\n"
-        + "out = {}\n"
-        + "for kw in keywords:\n"
-        + "    hits = [rel for rel, text in texts.items() if kw in text]\n"
-        + "    out[kw] = {'keyword': kw, 'contains': bool(hits), 'hits': hits}\n"
+        "import os\n"
+        "PROJECT = PAYLOAD['project_path']\n"
+        "keywords = PAYLOAD['keywords']\n"
+        "targets = PAYLOAD['targets']\n"
+        "texts = {}\n"
+        "for rel in targets:\n"
+        "    p = os.path.join(PROJECT, rel)\n"
+        "    if not os.path.exists(p):\n"
+        "        continue\n"
+        "    try:\n"
+        "        with open(p, 'r', encoding='utf-8', errors='replace') as f:\n"
+        "            texts[rel] = f.read()\n"
+        "    except Exception:\n"
+        "        continue\n"
+        "out = {}\n"
+        "for kw in keywords:\n"
+        "    hits = [rel for rel, text in texts.items() if kw in text]\n"
+        "    out[kw] = {'keyword': kw, 'contains': bool(hits), 'hits': hits}\n"
     )
-    return _run_probe(Path(project_path), code, timeout=timeout)
+    return _run_probe(Path(project_path), code, timeout=timeout, payload=payload)
 
 
 def inspect_aliases_multi(project_path: str, terms: List[str], timeout: int = 180) -> Dict[str, Any]:
@@ -428,21 +412,22 @@ def inspect_aliases_multi(project_path: str, terms: List[str], timeout: int = 18
     terms = [str(t) for t in (terms or []) if str(t).strip()]
     if not terms:
         return {"ok": True, "data": {}}
+    payload = {"project_path": str(Path(project_path)), "terms": terms}
     code = (
-        "import sys, os, json\n"
-        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
-        + "sys.path.insert(0, PROJECT)\n"
-        + "os.chdir(PROJECT)\n"
-        + "from character_aliases import ALIAS_MAP, resolve_aliases\n"
-        + "terms = " + json.dumps(terms, ensure_ascii=False) + "\n"
-        + "out = {}\n"
-        + "for term in terms:\n"
-        + "    try:\n"
-        + "        out[term] = {'term': term, 'canonical': ALIAS_MAP.get(term), 'variants': resolve_aliases(term)}\n"
-        + "    except Exception as e:\n"
-        + "        out[term] = {'term': term, 'canonical': None, 'variants': [], 'error': repr(e)}\n"
+        "import sys, os\n"
+        "PROJECT = PAYLOAD['project_path']\n"
+        "sys.path.insert(0, PROJECT)\n"
+        "os.chdir(PROJECT)\n"
+        "from character_aliases import ALIAS_MAP, resolve_aliases\n"
+        "terms = PAYLOAD['terms']\n"
+        "out = {}\n"
+        "for term in terms:\n"
+        "    try:\n"
+        "        out[term] = {'term': term, 'canonical': ALIAS_MAP.get(term), 'variants': resolve_aliases(term)}\n"
+        "    except Exception as e:\n"
+        "        out[term] = {'term': term, 'canonical': None, 'variants': [], 'error': repr(e)}\n"
     )
-    return _run_probe(Path(project_path), code, timeout=timeout)
+    return _run_probe(Path(project_path), code, timeout=timeout, payload=payload)
 
 
 def routing_probe(project_path: str, question: str, timeout: int = 180) -> Dict[str, Any]:
@@ -455,20 +440,21 @@ def routing_probe(project_path: str, question: str, timeout: int = 180) -> Dict[
         ensure_project_path(project_path)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
+    payload = {"project_path": str(Path(project_path)), "question": str(question)}
     code = (
-        "import sys, os, json\n"
-        + "PROJECT = " + json.dumps(str(Path(project_path))) + "\n"
-        + "sys.path.insert(0, PROJECT)\n"
-        + "os.chdir(PROJECT)\n"
-        + "from intent_router import TOOL_GROUPS, _TASK_METADATA_HARD_RULE\n"
-        + "question = " + json.dumps(str(question), ensure_ascii=False) + "\n"
-        + "out = {\n"
-        + "    'tool_groups': TOOL_GROUPS,\n"
-        + "    'hard_rule_hit': bool(_TASK_METADATA_HARD_RULE.search(question)),\n"
-        + "    'required_tools': list(TOOL_GROUPS.get('D', [])) if _TASK_METADATA_HARD_RULE.search(question) else [],\n"
-        + "}\n"
+        "import sys, os\n"
+        "PROJECT = PAYLOAD['project_path']\n"
+        "sys.path.insert(0, PROJECT)\n"
+        "os.chdir(PROJECT)\n"
+        "from intent_router import TOOL_GROUPS, _TASK_METADATA_HARD_RULE\n"
+        "question = PAYLOAD['question']\n"
+        "out = {\n"
+        "    'tool_groups': TOOL_GROUPS,\n"
+        "    'hard_rule_hit': bool(_TASK_METADATA_HARD_RULE.search(question)),\n"
+        "    'required_tools': list(TOOL_GROUPS.get('D', [])) if _TASK_METADATA_HARD_RULE.search(question) else [],\n"
+        "}\n"
     )
-    return _run_probe(Path(project_path), code, timeout=timeout)
+    return _run_probe(Path(project_path), code, timeout=timeout, payload=payload)
 
 
 
@@ -489,6 +475,12 @@ def _safe_relative(project_root: Path, rel: str) -> Optional[Path]:
     parts = [x for x in rel_clean.split("/") if x]
     if any(x == ".." for x in parts):
         return None
+    # 逐段拒绝符号链接，避免通过链接跳出项目根目录。
+    current = project_root
+    for part in parts:
+        current = current / part
+        if current.is_symlink():
+            return None
     # 允许形如 app/agent/nodes.py
     p = (project_root / rel_clean).resolve()
     try:
@@ -595,7 +587,7 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
     try:
         r = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, env=build_child_env(),
         )
         if r.returncode == 0:
             head = r.stdout.strip()
@@ -604,7 +596,7 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
     try:
         r = subprocess.run(
             ["git", "-C", str(root), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, env=build_child_env(),
         )
         if r.returncode == 0:
             dirty = bool(r.stdout.strip())

@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
 
+from app.services.path_guard import DEFAULT_PROJECT_PATH
+from app.services.qwen_client import get_deepseek_api_key, is_allowed_llm_endpoint
 from app.services.system_prompts import get_plan_system_prompt
 from schemas.eval import RunCaseResult, TestCase
 
@@ -68,27 +69,30 @@ SEMANTIC_ALLOWED_KEYWORDS = {
     # 通用行为/概念类
     "喝酒", "自由", "守护", "现实", "见证", "从容", "命运",
     "接纳", "承认过去", "童话", "备份", "抛弃", "人类", "扮演",
-    "实力", "胜利者", "对立", "环形", "塔楼", "开场动画",
+    "实力", "胜利者", "对立", "环形", "塔楼", "开场动画", "愿景",
+}
+
+# 这些禁止词不能只靠裸词字符串命中：
+# 例如“黑暗”可能是复述渊下宫三界观/原文对话，不一定是把深渊简单定性为黑暗。
+# 命中后交给语义裁判判断“是否属于简化标签式违规”。
+SEMANTIC_FORBIDDEN_KEYWORDS = {
+    "黑暗",
 }
 
 
-SEMANTIC_JUDGE_MODEL = "deepseek-v4-flash"
+SEMANTIC_JUDGE_MODEL = "deepseek-flash"
+DEEPSEEK_CHAT_URL = "https://api.deepseek.com/v1/chat/completions"
 
 
-def _deepseek_key() -> str:
+def _deepseek_key(project_path: Optional[str] = None) -> str:
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     if key:
         return key
-    env_file = Path("C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用/.env")
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("DEEPSEEK_API_KEY="):
-                return line.split("=",1)[1].strip().strip('"').strip("'")
-    return ""
+    return get_deepseek_api_key(project_path or DEFAULT_PROJECT_PATH)
 
 
-def semantic_keyword_batch_check(answer: str, keywords: List[str]) -> List[str]:
-    """用轻量 LLM（关闭思考的 deepseek-v4-flash）批量判断答案是否在语义上覆盖关键词。
+def semantic_keyword_batch_check(answer: str, keywords: List[str], project_path: Optional[str] = None) -> List[str]:
+    """用轻量 LLM（关闭思考的 deepseek-flash）批量判断答案是否在语义上覆盖关键词。
 
     不做白名单/正则匹配：由模型判断「并未被收录」「未找到」「不在列表中」等
     是否等价于要求的关键词，例如「未收录」。
@@ -101,8 +105,8 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str]) -> List[str]:
     if not ans_short:
         return []
 
-    key = _deepseek_key()
-    if not key:
+    key = _deepseek_key(project_path)
+    if not key or not is_allowed_llm_endpoint(DEEPSEEK_CHAT_URL):
         return []
 
     numbered = "\n".join(f"{i + 1}. {kw}" for i, kw in enumerate(keywords))
@@ -143,7 +147,7 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str]) -> List[str]:
     for payload in payloads:
         try:
             resp = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
+                DEEPSEEK_CHAT_URL,
                 headers=headers,
                 json=payload,
                 timeout=60,
@@ -169,11 +173,94 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str]) -> List[str]:
     return []
 
 
+def semantic_forbidden_batch_check(question: str, answer: str, keywords: List[str], project_path: Optional[str] = None) -> List[str]:
+    """用轻量 LLM 判断“禁止词”是否属于简化标签式违规。
+
+    与 must_contain 的语义兜底相反：这里的关键词是禁止词，不能裸词命中就判违规。
+    例如“黑暗”可能只是复述渊下宫三界观/原文对话，不代表把深渊简单定性为黑暗。
+    裁判不可用或解析失败时保守回退为原行为（返回全部候选词），避免漏判。
+    """
+    if not keywords:
+        return []
+    ans_short = (answer or "")[:3000].strip()
+    if not ans_short:
+        return []
+    key = _deepseek_key(project_path)
+    if not key or not is_allowed_llm_endpoint(DEEPSEEK_CHAT_URL):
+        return list(keywords)
+
+    numbered = "\n".join(f"{i + 1}. {kw}" for i, kw in enumerate(keywords))
+    prompt = f"""你是关键词违规裁判。
+【用户问题】
+{question or "（未提供）"}
+
+【答案】
+{ans_short}
+
+【禁止词列表】
+{numbered}
+
+判断规则：
+- 这些禁止词用于防止答案把提问对象简单定性/等同为“黑暗、邪恶、外来敌人”这类简化标签；
+- 如果答案只是在复述知识库原文设定、剧情对话、专有设定（例如渊下宫三界观、能量体系、组织历史）中出现该词，不算违规；
+- 只有当该词被用来直接给提问对象下定性结论、贴标签或当作核心定义时，才算违规。
+
+请只输出 JSON，格式为：{{"violations": [违规的禁止词编号（数字）]}}
+"""
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    base_payload = {
+        "model": SEMANTIC_JUDGE_MODEL,
+        "messages": [
+            {"role": "system", "content": "你是一个严谨的语义裁判。只输出简短 JSON。"},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0,
+        "max_tokens": 256,
+    }
+    payloads = [
+        {**base_payload, "thinking": {"type": "disabled"}},
+        base_payload,
+    ]
+    for payload in payloads:
+        try:
+            resp = requests.post(
+                DEEPSEEK_CHAT_URL,
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+            if resp.status_code != 200:
+                continue
+            content = resp.json()["choices"][0]["message"]["content"].strip()
+            start = content.find("{")
+            end = content.rfind("}") + 1
+            if start < 0 or end <= start:
+                continue
+            data = json.loads(content[start:end])
+            items = data.get("violations", []) or []
+            result = []
+            for item in items:
+                if isinstance(item, int) and 1 <= item <= len(keywords):
+                    result.append(keywords[item - 1])
+                elif isinstance(item, str) and item in keywords:
+                    result.append(item)
+            return result
+        except Exception:
+            continue
+    # 裁判调用/解析失败时保守回退：按原裸词命中处理。
+    return list(keywords)
+
+
 def _evaluate_single_keyword_variant(
     answer: str,
     must_contain: List[str],
     must_not_contain: List[str],
     match_mode: str,
+    question: str = "",
+    project_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """按单个答案标准（变体）执行关键词判定。"""
     reasons = []
@@ -196,7 +283,7 @@ def _evaluate_single_keyword_variant(
             reasons.append(f"缺少必须包含：{kw}")
 
     if semantic_candidates:
-        semantic_hits = set(semantic_keyword_batch_check(answer or "", semantic_candidates))
+        semantic_hits = set(semantic_keyword_batch_check(answer or "", semantic_candidates, project_path))
         for kw in semantic_candidates:
             if kw in semantic_hits:
                 hit_count += 1
@@ -211,11 +298,25 @@ def _evaluate_single_keyword_variant(
     else:
         contains_ok = hit_rate >= 0.75
 
+    # 禁止词：普通词裸词命中即违规；SEMANTIC_FORBIDDEN_KEYWORDS 里的词
+    # 需要再问一次语义裁判，区分“简化标签式定性”与“复述原文设定”。
+    semantic_forbidden_candidates = [
+        kw for kw in must_not_contain
+        if kw and kw in SEMANTIC_FORBIDDEN_KEYWORDS and _strip_negation(answer or "", kw)
+    ]
+    semantic_forbidden_violations = set(
+        semantic_forbidden_batch_check(question, answer or "", semantic_forbidden_candidates, project_path)
+    )
+
     violations = []
     for kw in must_not_contain:
-        if kw and _strip_negation(answer or "", kw):
-            violations.append(kw)
-            reasons.append(f"出现禁止包含：{kw}")
+        if not kw or not _strip_negation(answer or "", kw):
+            continue
+        if kw in SEMANTIC_FORBIDDEN_KEYWORDS and kw not in semantic_forbidden_violations:
+            # 语义裁判认为只是复述原文/设定，不算违规。
+            continue
+        violations.append(kw)
+        reasons.append(f"出现禁止包含：{kw}")
 
     not_contains_ok = len(violations) == 0
     passed = contains_ok and not_contains_ok
@@ -241,7 +342,7 @@ def _variant_score(r: Dict[str, Any]) -> tuple:
     )
 
 
-def evaluate_keywords(answer: str, case: TestCase) -> Dict[str, Any]:
+def evaluate_keywords(answer: str, case: TestCase, project_path: Optional[str] = None) -> Dict[str, Any]:
     """支持“双答案/多答案标准”：主标准 + alternatives，任一标准通过即视为关键词通过。
 
     返回结构：
@@ -273,6 +374,8 @@ def evaluate_keywords(answer: str, case: TestCase) -> Dict[str, Any]:
             v["must_contain"],
             v["must_not_contain"],
             v["match_mode"],
+            question=case.question,
+            project_path=project_path,
         )
         r["name"] = v["name"]
         variant_results.append(r)
@@ -347,7 +450,7 @@ def check_prompt_compliance(trace: Dict[str, Any], project_path: Optional[str] =
     }
 
 
-def evaluate_trace_for_case(case: TestCase, trace: Optional[Dict[str, Any]]) -> RunCaseResult:
+def evaluate_trace_for_case(case: TestCase, trace: Optional[Dict[str, Any]], project_path: Optional[str] = None) -> RunCaseResult:
     result = RunCaseResult(case_id=case.case_id, question=case.question)
 
     if trace is None:
@@ -364,7 +467,7 @@ def evaluate_trace_for_case(case: TestCase, trace: Optional[Dict[str, Any]]) -> 
     result.metrics = _collect_metrics_from_trace(trace)
 
     # 1) 关键词
-    kw = evaluate_keywords(answer, case)
+    kw = evaluate_keywords(answer, case, project_path)
     result.keyword_pass = kw["passed"]
     result.matched_variant = kw.get("matched_variant")
     result.reasons.extend(kw["reasons"])
@@ -386,7 +489,7 @@ def evaluate_trace_for_case(case: TestCase, trace: Optional[Dict[str, Any]]) -> 
         result.route_pass = None if not case.expected_route else True
 
     # 4) 系统提示词合规检查（只读挂载原项目系统提示词）
-    pc = check_prompt_compliance(trace)
+    pc = check_prompt_compliance(trace, project_path)
     result.prompt_pass = pc["passed"]
     result.prompt_violations = pc["violations"]
     result.reasons.extend(pc["violations"])

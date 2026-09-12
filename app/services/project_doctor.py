@@ -45,7 +45,7 @@ from app.services.diagnostic_pipeline import (
 )
 from app.services.path_guard import ensure_project_path
 from app.services.project_map import format_project_map, generate_project_map
-from app.services.qwen_client import get_qwen_endpoints
+from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
 from app.services.source_snapshot import trace_snapshot_status
 
 DOCTOR_MODEL = os.environ.get("DOCTOR_MODEL", "qwen3.7-max")
@@ -245,6 +245,9 @@ def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpo
     errors = []
     for ep in eps:
         base_url = str(ep.get("base_url") or "").rstrip("/")
+        if not is_allowed_llm_endpoint(base_url):
+            errors.append(f"[{ep.get('source','?')}] endpoint 不在白名单，已拒绝")
+            continue
         api_key = str(ep.get("api_key") or "")
         url = base_url + "/chat/completions"
         try:
@@ -259,9 +262,9 @@ def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpo
             )
             if resp.status_code == 200:
                 return resp.json()
-            errors.append(f"[{ep.get('source','?')}] {resp.status_code}: {resp.text[:300]}")
-        except Exception as e:
-            errors.append(f"[{ep.get('source','?')}] {repr(e)}")
+            errors.append(f"[{ep.get('source','?')}] HTTP {resp.status_code}")
+        except Exception:
+            errors.append(f"[{ep.get('source','?')}] 请求异常")
     raise RuntimeError(f"LLM 调用失败（尝试了 {len(eps)} 个接口）: {' | '.join(errors)}")
 
 
@@ -1217,7 +1220,7 @@ def prescribe_run_case(
     if model:
         DOCTOR_MODEL = model
     try:
-        ensure_project_path(project_path)
+        project_path = str(ensure_project_path(project_path))
     except ValueError as e:
         raise ValueError(str(e))
 
