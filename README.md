@@ -215,3 +215,22 @@ API：
 python -m evaluator.lint --cases "C:/Users/24701/Desktop/原神剧情/golden_test_set.json" \
   --results "C:/Users/24701/Desktop/原神剧情/golden_test_results_full26_windowfix_20260913"
 ```
+
+## Evaluator Phase 2（共享 harness + scorers + adapter）
+
+- `evaluator/harness.py`：共享跑测：内置 adapter 子进程、超时 kill、每题打分、结果落盘、manifest 更新。
+- `evaluator/scorers/`：judge / RAGAS / 关键词 / 引用四个 scorer；judge 失败可见、窗口来自配置、带 prompt 缓存。
+- `evaluator/adapters/genshin.py`：原神 adapter，遵循 `stdin JSON -> stdout AgentResult` 协议。
+- `evaluator/report.py`：HTML 报告生成（从旧 harness 原样迁移）。
+- `tools/run_evalset.py`：Phase 2 薄 CLI；运行产物在 `runs/<run_id>/{manifest.json, results/*.json, report.html}`。
+- `tools/run_golden_test.py`：保留为 legacy runner，Phase 3 迁移完成后移除。
+
+用法：
+
+```bash
+# 单题冒烟
+python tools/run_evalset.py --ids=F2 --force
+
+# 全量（按题集默认路径）
+python tools/run_evalset.py --force
+```
