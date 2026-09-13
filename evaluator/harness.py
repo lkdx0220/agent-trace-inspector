@@ -25,6 +25,8 @@ def content_digest(result: Dict[str, Any]) -> str:
         "question": result.get("question"),
         "category": result.get("category"),
         "answer": result.get("answer"),
+        "tool_trace": result.get("tool_trace"),
+        "trace_id": (result.get("raw") or {}).get("trace_id"),
         "ragas": result.get("ragas"),
         "must_contain_result": result.get("must_contain_result"),
         "must_not_contain_result": result.get("must_not_contain_result"),
@@ -175,6 +177,10 @@ def _build_result_row(case: Dict[str, Any], agent_result: AgentResult, score: Di
         "ragas": score.get("ragas"),
         "must_contain_result": score.get("must_contain_result"),
         "must_not_contain_result": score.get("must_not_contain_result"),
+        "matched_variant": score.get("matched_variant"),
+        "variant_results": score.get("variant_results"),
+        "keyword_passed": score.get("keyword_passed"),
+        "keyword_reasons": score.get("keyword_reasons"),
         "citation_result": score.get("citation_result"),
         "judge_valid": score.get("judge_valid"),
         "judge_errors": score.get("judge_errors", []),
@@ -189,6 +195,7 @@ def _build_result_row(case: Dict[str, Any], agent_result: AgentResult, score: Di
     }
     if agent_result.status != "ok":
         row["error"] = agent_result.error or agent_result.status
+    row["raw"] = agent_result.raw
     row["schema_version"] = RESULT_SCHEMA_VERSION
     row["provenance"] = {"question_sha256": case_sha256(case)}
     row["content_digest"] = content_digest(row)

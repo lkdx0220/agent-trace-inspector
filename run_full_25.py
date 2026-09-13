@@ -1,16 +1,46 @@
 # -*- coding: utf-8 -*-
+"""全量评测入口（Phase 6 后统一走共享 evaluator）。
+
+用法：
+    python run_full_25.py
+
+默认读取 evalset/genshin/cases.json 的全部题目，逐题起独立 adapter 子进程，
+跑完后由 evaluator/db_bridge.py 写回 inspector.db，供 Web UI 查看。
+"""
+from __future__ import annotations
+
+import json
+import subprocess
 import sys
-sys.path.insert(0, '.')
-from app.services.live_runner import run_live
-from app.services.eval_store import list_test_cases
+from pathlib import Path
 
-project_path = r'C:\Users\24701\Desktop\原神剧情\CASE-原神剧情助手-修改用'
-ids = [c['case_id'] for c in list_test_cases()]
+ROOT = Path(__file__).resolve().parent
+CASES = ROOT / "evalset" / "genshin" / "cases.json"
 
-print('开始跑 25 题全量评测...')
-record = run_live(project_path=project_path, case_ids=ids, run_name='25题全量评测')
-print('=' * 50)
-print('RUN_ID:', record.run_id)
-print('通过:', record.passed_cases, '/', record.total_cases)
-print('通过率:', record.pass_rate, '%')
-print('失败题:', [r.case_id for r in record.results if not r.passed])
+
+def main() -> int:
+    if not CASES.exists():
+        print(f"[错误] 题集不存在: {CASES}")
+        return 2
+    data = json.loads(CASES.read_text(encoding="utf-8"))
+    ids = [str(q.get("id")) for q in data.get("questions") or [] if q.get("id")]
+    if not ids:
+        print("[错误] 题集为空")
+        return 2
+
+    cmd = [
+        sys.executable,
+        str(ROOT / "tools" / "run_evalset.py"),
+        "--adapter", "genshin",
+        "--ids", ",".join(ids),
+        "--force",
+        "--save-db",
+        "--name", "全量评测",
+        "--timeout", "600",
+    ]
+    print(f"[入口] 全量评测 {len(ids)} 题 -> tools/run_evalset.py")
+    return subprocess.call(cmd, cwd=str(ROOT))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -51,6 +51,8 @@ def main(argv=None) -> int:
     parser.add_argument("--judge-model", default="deepseek-chat")
     parser.add_argument("--force", action="store_true", help="忽略缓存，全部重跑")
     parser.add_argument("--no-report", action="store_true", help="不生成 HTML 报告")
+    parser.add_argument("--save-db", action="store_true", help="跑完后把结果桥接写入 inspector.db（Web UI 用）")
+    parser.add_argument("--name", default="", help="Run 显示名称，仅在 --save-db 时使用")
     args = parser.parse_args(argv)
 
     workspace = args.workspace or _default_workspace()
@@ -97,14 +99,12 @@ def main(argv=None) -> int:
     )
     judge.configure(judge_settings)
 
-    if args.adapter == "doctor":
-        project_path = str(INSPECTOR_DIR)
-    else:
-        project_path = str(Path(workspace) / "CASE-原神剧情助手-修改用")
+    original_project_path = str(Path(workspace) / "CASE-原神剧情助手-修改用")
+    manifest_project_path = str(INSPECTOR_DIR) if args.adapter == "doctor" else original_project_path
     manifest = build_manifest(
         run_id=run_id,
         adapter=args.adapter,
-        project_path=project_path,
+        project_path=manifest_project_path,
         evalset_path=cases_path,
         case_count=len(cases),
         judge_model=judge_settings.model,
@@ -152,6 +152,16 @@ def main(argv=None) -> int:
         report_path = run_dir / "report.html"
         generate_html(rows, str(report_path), judge_model=judge_settings.model)
         print(f"[报告] {report_path}")
+
+    if args.save_db:
+        from evaluator import db_bridge
+        record = db_bridge.build_run_record(
+            run_dir=run_dir,
+            name=args.name,
+            project_path=original_project_path,
+        )
+        db_bridge.save_run_record(record)
+        print(f"[DB] 已写入 inspector.db: {record.run_id}  {record.passed_cases}/{record.total_cases} 通过")
 
     print(f"[manifest] {manifest_path}")
     return 0

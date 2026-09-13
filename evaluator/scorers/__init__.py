@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Shared scorers：judge / RAGAS / 关键词 / 引用。"""
+"""Shared scorers：judge / RAGAS / 关键词 / 引用 / 确定性检查。"""
 from __future__ import annotations
 
 from typing import Any, Dict
 
-from evaluator.scorers import citations, judge, keywords, ragas  # noqa: F401
+from evaluator.scorers import citations, deterministic, judge, keywords, ragas  # noqa: F401
 
-__all__ = ["citations", "judge", "keywords", "ragas", "score_case"]
+__all__ = ["citations", "deterministic", "judge", "keywords", "ragas", "score_case"]
 
 
 def score_case(
@@ -19,9 +19,6 @@ def score_case(
     """对一题的 answer/contexts 打分，返回与旧 harness 兼容的结果结构。"""
     judge.reset_errors()
     question = str(case.get("question") or "")
-    match_mode = str(case.get("match_mode") or "all")
-    must_contain = case.get("must_contain") or []
-    must_not_contain = case.get("must_not_contain") or []
     reference_answer = reference or str(case.get("reference_answer") or "")
     mode = eval_mode or str(case.get("eval_mode") or "auto")
 
@@ -50,9 +47,16 @@ def score_case(
             "semantic_unavailable": [],
             "skipped": "manual",
         }
+        matched_variant = None
+        variant_results = []
+        keyword_reasons = []
     else:
-        must_contain_result = keywords.check_must_contain(answer, must_contain, match_mode)
-        must_not_contain_result = keywords.check_must_not_contain(answer, must_not_contain, question)
+        keyword_result = keywords.check_case_keywords(case, answer)
+        must_contain_result = keyword_result["must_contain_result"]
+        must_not_contain_result = keyword_result["must_not_contain_result"]
+        matched_variant = keyword_result.get("matched_variant")
+        variant_results = keyword_result.get("variant_results") or []
+        keyword_reasons = keyword_result.get("reasons") or []
 
     citation_result = citations.check_citations(answer, contexts)
     judge_errors = judge.get_errors()
@@ -66,6 +70,12 @@ def score_case(
         "ragas": ragas_result,
         "must_contain_result": must_contain_result,
         "must_not_contain_result": must_not_contain_result,
+        "matched_variant": matched_variant,
+        "variant_results": variant_results,
+        "keyword_reasons": keyword_reasons,
+        "keyword_passed": bool(
+            must_contain_result.get("passed") and must_not_contain_result.get("passed")
+        ),
         "citation_result": citation_result,
         "judge_valid": judge_valid,
         "judge_errors": judge_errors,

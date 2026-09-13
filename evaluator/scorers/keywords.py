@@ -183,3 +183,92 @@ def check_must_not_contain(answer: str, keywords: List[Any], question: str = "")
         "judge_unavailable": bool(semantic_unavailable),
         "semantic_unavailable": semantic_unavailable,
     }
+
+
+def _variant_score(must_contain_result: Dict[str, Any], must_not_contain_result: Dict[str, Any]) -> tuple:
+    return (
+        1 if (must_contain_result.get("passed") and must_not_contain_result.get("passed")) else 0,
+        float(must_contain_result.get("hit_rate") or 0.0),
+        -len(must_not_contain_result.get("violations") or []),
+        -len(must_contain_result.get("miss") or []),
+    )
+
+
+def check_case_keywords(
+    case: Dict[str, Any],
+    answer: str,
+    hit_rate_threshold: float = 0.8,
+) -> Dict[str, Any]:
+    """主标准 + alternatives 双答案/多答案判定。
+
+    任一变体通过即 keyword_pass=True；未通过时取综合得分最高的变体作为代表，
+    与旧 app.services.evaluator.evaluate_keywords 的行为保持一致。
+    """
+    question = str(case.get("question") or "")
+    variants: List[Dict[str, Any]] = [
+        {
+            "name": "标准答案",
+            "must_contain": case.get("must_contain") or [],
+            "must_not_contain": case.get("must_not_contain") or [],
+            "match_mode": str(case.get("match_mode") or "all"),
+        }
+    ]
+    for index, alt in enumerate(case.get("alternatives") or [], 1):
+        if not isinstance(alt, dict):
+            continue
+        variants.append({
+            "name": str(alt.get("name") or f"备选答案{index}"),
+            "must_contain": alt.get("must_contain") or [],
+            "must_not_contain": alt.get("must_not_contain") or [],
+            "match_mode": str(alt.get("match_mode") or "all"),
+        })
+
+    variant_results: List[Dict[str, Any]] = []
+    for variant in variants:
+        mc = check_must_contain(
+            answer,
+            variant["must_contain"],
+            variant["match_mode"],
+            hit_rate_threshold=hit_rate_threshold,
+        )
+        mnc = check_must_not_contain(answer, variant["must_not_contain"], question)
+        variant_results.append({
+            "name": variant["name"],
+            "match_mode": variant["match_mode"],
+            "passed": bool(mc.get("passed") and mnc.get("passed")),
+            "must_contain_result": mc,
+            "must_not_contain_result": mnc,
+        })
+
+    any_passed = any(item["passed"] for item in variant_results)
+    if any_passed:
+        representative = next(item for item in variant_results if item["passed"])
+    else:
+        representative = max(
+            variant_results,
+            key=lambda item: _variant_score(item["must_contain_result"], item["must_not_contain_result"]),
+        )
+
+    mc_rep = representative["must_contain_result"]
+    mnc_rep = representative["must_not_contain_result"]
+    reasons: List[str] = []
+    if not mc_rep.get("passed"):
+        reasons.extend(f"缺少必须包含：{kw}" for kw in mc_rep.get("miss") or [])
+    if not mnc_rep.get("passed"):
+        reasons.extend(f"出现禁止包含：{kw}" for kw in mnc_rep.get("violations") or [])
+    if not any_passed and len(variant_results) > 1:
+        reasons.append(f"不符合任一答案标准（共 {len(variant_results)} 个变体）")
+
+    return {
+        "passed": any_passed,
+        "matched_variant": representative["name"] if any_passed else None,
+        "must_contain_result": mc_rep,
+        "must_not_contain_result": mnc_rep,
+        "variant_results": variant_results,
+        "reasons": reasons,
+        "judge_unavailable": bool(mc_rep.get("judge_unavailable") or mnc_rep.get("judge_unavailable")),
+        "semantic_unavailable": {
+            "must_contain": mc_rep.get("semantic_unavailable") or [],
+            "must_not_contain": mnc_rep.get("semantic_unavailable") or [],
+        },
+    }

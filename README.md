@@ -234,3 +234,31 @@ python tools/run_evalset.py --ids=F2 --force
 # 全量（按题集默认路径）
 python tools/run_evalset.py --force
 ```
+
+## Evaluator Phase 3–6（题集迁移 / 医生 adapter / Web UI 切换）
+
+### Phase 3：题集迁移
+
+- 题集统一放到 `evalset/<project>/cases.json`；公开仓库只提交 `evalset/schema.json`，题集内容本地维护。
+- 原 26 题已迁到 `evalset/genshin/cases.json`，关键词全部对象化为 `literal / semantic / structural`。
+
+### Phase 4：医生 adapter
+
+- `evaluator/adapters/doctor.py`：调 `app/services/project_doctor.prescribe_run_case`，把医生的 `resolution + report` 压成 AnswerResult。
+- 医生题集在 `evalset/doctor/cases.json`，用法：
+  `python tools/run_evalset.py --adapter doctor --ids=D-F1-routing`
+
+### Phase 5：统一入口
+
+- `tools/run_golden_test.py` 已删除；`tools/run_evalset.py` 成为唯一跑测入口。
+- `run_full_25.py` 现在只是 `tools/run_evalset.py` 的薄包装，不再直接 import 旧 live_runner。
+
+### Phase 6：Web UI 批量评测切换
+
+- `evaluator/scorers/deterministic.py`：工具匹配、路由匹配、系统提示词工具规则合规检查。
+- `evaluator/scorers/keywords.py`：新增 `check_case_keywords`，支持 `alternatives` 双答案/多答案机制。
+- `evaluator/adapters/genshin.py`：在进程内用 `exporter.build_trace_from_result` 生成真实 Trace，放进 `AgentResult.raw.trace`。
+- `evaluator/db_bridge.py`：把 `runs/<run_id>/results/q_*.json` + manifest 转成旧 `RunRecord/RunCaseResult`，调用 `eval_store.save_run` 写回 `inspector.db`。
+- `tools/run_evalset.py --save-db`：跑完后桥接写库。
+- `POST /api/runs/live`：改为子进程调用 `tools/run_evalset.py --adapter genshin ... --save-db`；Web UI 仍按旧表结构读取 run/report/compare。
+- 旧 `app/services/live_runner.py` 不再被 Web API 使用；离线评测与医生/报告链路暂保留旧 evaluator，待 Phase 7 继续清理。

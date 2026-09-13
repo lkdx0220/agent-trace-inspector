@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+import os
+import subprocess
+import sys
+import uuid
+from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +15,7 @@ from app.services.rate_limit import audit_rate_limit, diagnose_rate_limit
 from app.services.run_service import compare_runs, create_offline_run
 
 router = APIRouter(prefix="/api", tags=["eval"], dependencies=[Depends(require_local_or_token)])
+INSPECTOR_ROOT = Path(__file__).resolve().parents[2]
 
 
 @router.get("/testcases")
@@ -31,7 +37,7 @@ def run_offline(name: str = "离线评测") -> Dict[str, Any]:
 
 @router.post("/runs/live")
 def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
-    from app.services.live_runner import run_live
+    """Phase 6：Web UI 实时评测改走新 evaluator 的薄 CLI，结束后桥接写回 inspector.db。"""
     project_path = payload.get("project_path", "")
     try:
         project_path = str(ensure_project_path(project_path))
@@ -40,14 +46,47 @@ def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
     case_ids = payload.get("case_ids", [])
     if not isinstance(case_ids, list) or not all(isinstance(x, str) for x in case_ids):
         raise HTTPException(status_code=400, detail="case_ids 必须是字符串数组")
-    if len(case_ids) > 100:
-        raise HTTPException(status_code=400, detail="case_ids 数量超过上限")
-    record = run_live(
-        project_path=project_path,
-        case_ids=case_ids,
-        run_name=payload.get("name", "实时评测"),
-    )
-    return record.model_dump()
+    if not case_ids or len(case_ids) > 100:
+        raise HTTPException(status_code=400, detail="case_ids 数量必须在 1..100")
+
+    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    name = str(payload.get("name") or "实时评测")
+    cmd = [
+        sys.executable,
+        str(INSPECTOR_ROOT / "tools" / "run_evalset.py"),
+        "--adapter", "genshin",
+        "--workspace", str(Path(project_path).parent),
+        "--ids", ",".join(case_ids),
+        "--run-id", run_id,
+        "--name", name,
+        "--timeout", "600",
+        "--force",
+        "--save-db",
+    ]
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(INSPECTOR_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3600,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="实时评测超时")
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "")[-800:]
+        raise HTTPException(status_code=500, detail=f"实时评测失败: {tail}")
+    record = get_run(run_id)
+    if not record:
+        tail = (proc.stdout or "")[-800:]
+        raise HTTPException(status_code=500, detail=f"评测已结束但未找到 run {run_id}: {tail}")
+    return record
 
 
 def _md_to_html(text: str) -> str:
