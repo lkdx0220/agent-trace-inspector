@@ -1,0 +1,183 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Evaluator test set schema",
+  "description": "共享 harness + scorers 的题集格式；题集内容按项目各自维护，不放进 evaluator 代码。",
+  "type": "object",
+  "required": ["schema_version", "metadata", "questions"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "题集 schema 版本，例如 1.0"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["project", "total_questions"],
+      "properties": {
+        "project": {
+          "type": "string",
+          "description": "项目标识，例如 genshin / doctor"
+        },
+        "total_questions": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "必须与实际 questions 数量一致，lint 会强校验"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "kb_requirement": {
+          "type": "string",
+          "description": "题集依赖的 KB 能力/版本说明，例如 kb_vectors_m3@2026-09-10"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/question"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "definitions": {
+    "keyword": {
+      "description": "三类关键词：literal 专名精确命中；semantic 允许 LLM 语义兜底；structural 结构项（任务名/编号），可配别名。旧格式纯字符串仍可读，但 lint 会提示迁移。",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "required": ["text", "match"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "match": {
+              "enum": ["literal", "semantic", "structural"]
+            },
+            "aliases": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "answerVariant": {
+      "type": "object",
+      "required": ["name", "must_contain"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "expected_answer": {
+          "type": "string"
+        },
+        "must_contain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/keyword"
+          }
+        },
+        "must_not_contain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/keyword"
+          }
+        },
+        "match_mode": {
+          "enum": ["all", "any"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "question": {
+      "type": "object",
+      "required": [
+        "id",
+        "question",
+        "category",
+        "reference_answer",
+        "must_contain",
+        "must_not_contain"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string"
+        },
+        "difficulty": {
+          "type": "string"
+        },
+        "test_type": {
+          "type": "string"
+        },
+        "reference_answer": {
+          "type": "string"
+        },
+        "must_contain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/keyword"
+          }
+        },
+        "must_not_contain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/keyword"
+          }
+        },
+        "match_mode": {
+          "enum": ["all", "any", null]
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/answerVariant"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kb_requirement": {
+          "type": "string"
+        },
+        "visibility": {
+          "enum": ["public", "internal"],
+          "description": "internal 题集默认不进公开仓库"
+        },
+        "context": {
+          "type": "string"
+        },
+        "eval_mode": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

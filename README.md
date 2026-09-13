@@ -199,3 +199,19 @@ API：
   - `python tools/run_golden_test.py`
   - `python tools/run_golden_test.py --force`
   - `python tools/run_golden_test.py --ids=R1,R2`
+
+## Evaluator 接口契约（Phase 1）
+
+- `evaluator/接口契约.md`：adapter 协议（子进程 + JSON）、AgentResult 字段、manifest、判分口径、题集 schema。
+- `evaluator/contract.py`：`AgentResult` / `AgentTimings` 数据契约与校验。
+- `evaluator/manifest.py`：`RunManifest` 读写，记录 project commit、KB hash、题集 hash、judge 参数、逐题状态。
+- `evaluator/lint.py`：题集体检（`total_questions`、关键词分类、历史零命中、旧词提示）。
+- `evaluator/config.example.yaml`：judge 模型/窗口/阈值/噪声带/缓存模板。
+- `evalset/schema.json`：题集 JSON Schema；`must_contain` 支持 `literal / semantic / structural` 三类关键词。
+
+用法：
+
+```bash
+python -m evaluator.lint --cases "C:/Users/24701/Desktop/原神剧情/golden_test_set.json" \
+  --results "C:/Users/24701/Desktop/原神剧情/golden_test_results_full26_windowfix_20260913"
+```

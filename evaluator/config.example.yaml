@@ -1,0 +1,47 @@
+# Evaluator 配置示例（Phase 1）
+# 实际使用时可以复制成 config.yaml，被 harness / scorers / manifest 共同读取。
+schema_version: "1.0"
+
+harness:
+  concurrency: 4
+  timeout_seconds: 300
+  runs_dir: runs
+
+adapter:
+  # 被测项目只提供适配器，不把自己的逻辑塞进 evaluator
+  name: genshin
+  # 推荐协议：父进程起子进程，stdin 传 {question, context}，stdout 返回 AgentResult JSON
+  protocol: json_stdio
+  command: ["python", "adapters/genshin_agent.py"]
+
+judge:
+  # 推理模型不要当 judge：reasoning 会吃掉 max_tokens，导致 content 为空
+  model: deepseek-chat
+  params:
+    temperature: 0
+    max_tokens: 512
+    thinking: disabled
+  # 判分窗口：默认给足；上限只防超长 prompt，不用于日常截断
+  window:
+    contexts_chars: 60000
+    answer_chars: 20000
+    reference_chars: 20000
+  # 没有 seed 时同题重复评分，取中位并记录两次结果
+  repeat: 2
+
+scoring:
+  # 硬指标阈值
+  must_contain_default_hit_rate: 0.8
+  # 噪声带：软指标只做趋势，不把噪声当回归
+  noise_band:
+    enabled: true
+    repeats: 2
+  cache:
+    enabled: true
+    dir: runs/_cache
+
+manifest:
+  # run manifest 必填校验
+  require_project_commit: true
+  require_kb_manifest: false
+  require_evalset_sha256: true
