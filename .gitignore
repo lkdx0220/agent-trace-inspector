@@ -13,4 +13,6 @@ venv/
 # 运行期本地数据（大文件/可重建）一律不入公开仓库
 /data/
 /runs/
+# 题集内容按项目各自维护，本地保留，公开仓库只放 schema
+/evalset/*/cases.json
 

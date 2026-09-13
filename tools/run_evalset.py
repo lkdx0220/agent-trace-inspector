@@ -40,7 +40,7 @@ def _load_cases(path: str) -> List[Dict[str, Any]]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Run evalset with shared harness + scorers")
-    parser.add_argument("--cases", default="", help="题集 JSON；默认 <workspace>/golden_test_set.json")
+    parser.add_argument("--cases", default="", help="题集 JSON；默认 evalset/genshin/cases.json，不存在时回退 <workspace>/golden_test_set.json")
     parser.add_argument("--workspace", default="", help="被测项目工作区；默认 inspector 上一级")
     parser.add_argument("--runs-dir", default="", help="运行目录；默认 inspector/runs")
     parser.add_argument("--run-id", default="", help="自定义 run_id")
@@ -53,7 +53,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     workspace = args.workspace or _default_workspace()
-    cases_path = args.cases or str(Path(workspace) / "golden_test_set.json")
+    if args.cases:
+        cases_path = args.cases
+    else:
+        local_cases = INSPECTOR_DIR / "evalset" / "genshin" / "cases.json"
+        if local_cases.exists():
+            cases_path = str(local_cases)
+        else:
+            cases_path = str(Path(workspace) / "golden_test_set.json")
     if not Path(cases_path).exists():
         print(f"[错误] 题集不存在: {cases_path}")
         return 2
