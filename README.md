@@ -183,9 +183,9 @@ API：
 - `POST /api/runs/{run_id}/audit`：批量审计一个 Run 的 passed 题
 - `GET /api/runs/{run_id}/audit`：读取已保存的审计结果
 
-## Golden Test Runner（tools/run_golden_test.py）
+## Golden Test Runner（tools/run_evalset.py）
 
-- 独立跑测工具：每题独立子进程执行原项目 Agent → 收集回答/工具返回 → RAGAS 四维 + 关键词 + 引用核对 → 输出 HTML 报告。
+- 统一跑测入口：每题独立子进程执行 adapter → 收集回答/工具返回/上下文 → RAGAS 四维 + 关键词 + 引用核对 → 输出 HTML 报告。
 - 默认工作区是 inspector 仓库的上一级目录；目录结构不同时用 `GOLDEN_TEST_WORKSPACE` 指定。
 - 关键行为：
   - Judge 不可用（缺 Key/网络/HTTP/格式错误）会记录 `judge_valid=false`，不再静默变成低分；
@@ -194,11 +194,11 @@ API：
   - 答案/上下文/参考答案以 `<<<BEGIN_UNTRUSTED_*>>>` 数据块交给 Judge，并做分隔标记防伪造；
   - 单题超时由父进程 kill 子进程，避免遗留线程；
   - 缓存带 `schema_version`、`question_sha256`、`content_digest` 校验；
-  - 结果缓存到 `<工作区>/golden_test_results/`。
+  - 结果落盘到 `runs/<run_id>/{manifest.json, results/*.json, report.html}`。
 - 用法：
-  - `python tools/run_golden_test.py`
-  - `python tools/run_golden_test.py --force`
-  - `python tools/run_golden_test.py --ids=R1,R2`
+  - `python tools/run_evalset.py --adapter genshin --force`
+  - `python tools/run_evalset.py --adapter genshin --ids=R1,R2`
+  - `python tools/run_evalset.py --adapter doctor --ids=D-F1-routing`
 
 ## Evaluator 接口契约（Phase 1）
 
@@ -212,8 +212,8 @@ API：
 用法：
 
 ```bash
-python -m evaluator.lint --cases "C:/Users/24701/Desktop/原神剧情/golden_test_set.json" \
-  --results "C:/Users/24701/Desktop/原神剧情/golden_test_results_full26_windowfix_20260913"
+python -m evaluator.lint --cases "evalset/genshin/cases.json" \
+  --results "runs/phase2_full26_20260913/results"
 ```
 
 ## Evaluator Phase 2（共享 harness + scorers + adapter）
@@ -222,8 +222,8 @@ python -m evaluator.lint --cases "C:/Users/24701/Desktop/原神剧情/golden_tes
 - `evaluator/scorers/`：judge / RAGAS / 关键词 / 引用四个 scorer；judge 失败可见、窗口来自配置、带 prompt 缓存。
 - `evaluator/adapters/genshin.py`：原神 adapter，遵循 `stdin JSON -> stdout AgentResult` 协议。
 - `evaluator/report.py`：HTML 报告生成（从旧 harness 原样迁移）。
-- `tools/run_evalset.py`：Phase 2 薄 CLI；运行产物在 `runs/<run_id>/{manifest.json, results/*.json, report.html}`。
-- `tools/run_golden_test.py`：保留为 legacy runner，Phase 3 迁移完成后移除。
+- `tools/run_evalset.py`：统一跑测入口；运行产物在 `runs/<run_id>/{manifest.json, results/*.json, report.html}`。
+- `tools/run_golden_test.py` 已退役；旧口径结果目录只作为历史基线保留，不再新增。
 
 用法：
 
