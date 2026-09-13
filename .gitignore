@@ -10,20 +10,6 @@ venv/
 .env.*
 !.env.example
 
-# 运行期本地数据（大文件/可重建）
-data/inspector.db
-data/tmp/
+# 运行期本地数据（大文件/可重建）一律不入公开仓库
+/data/
 
-# 编辑器
-.vscode/
-.idea/
-*.swp
-
-# 运行数据/诊断产物不进入公开仓库
-# 仅保留两个演示 Trace，其余全部忽略
-/data/*
-!/data/
-!/data/traces/
-/data/traces/*
-!/data/traces/trace_live_C1.json
-!/data/traces/trace_live_R4.json
