@@ -97,6 +97,7 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
     keyword_stats = Counter()
     keyword_unclassified = []
     zero_hit: List[Dict[str, str]] = []
+    semantic_zero_skipped: List[str] = []
     question_ids: List[str] = []
     results_cache: List[Dict[str, Any]] = []
 
@@ -151,11 +152,15 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
                     errors.append(f"{qid or label} 关键词「{text}」match 非法: {match!r}")
                     continue
                 keyword_stats[match] += 1
-                if kind == "must_contain" and results_cache:
+                if kind == "must_contain" and results_cache and match != "semantic":
                     hits = sum(1 for r in results_cache if _keyword_hit(text, str(r.get("answer") or "")))
                     ctx_hits = sum(1 for r in results_cache if _keyword_hit(text, str(r.get("contexts") or "")))
                     if hits == 0 and ctx_hits == 0:
                         zero_hit.append({"case_id": qid, "keyword": text, "answer_hits": "0", "ctx_hits": "0"})
+                elif kind == "must_contain" and results_cache and match == "semantic":
+                    # 语义词本来就允许同义改写，不能因为字面 0 命中就告警；
+                    # 它的有效性由 judge 在跑测时判定。
+                    semantic_zero_skipped.append(f"{qid}:{text}")
                 elif kind == "must_contain" and not answer:
                     warnings.append(f"{qid or label} 缺少 reference_answer，无法做词表体检")
 
@@ -166,6 +171,8 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
         )
     if zero_hit:
         warnings.append(f"{len(zero_hit)} 个 must_contain 在历史结果里 answer/contexts 命中均为 0，建议复核")
+    if semantic_zero_skipped:
+        info.append(f"{len(semantic_zero_skipped)} 个语义关键词跳过字面零命中体检（由 judge 判同义表达）")
 
     if results_dir and not results_cache:
         warnings.append(f"results 目录没有找到 q_*.json: {results_dir}")
@@ -189,6 +196,7 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
         "keyword_stats": dict(keyword_stats),
         "keyword_unclassified": keyword_unclassified[:50],
         "zero_hit_keywords": zero_hit,
+        "semantic_zero_skipped": semantic_zero_skipped[:50],
     }
 
 

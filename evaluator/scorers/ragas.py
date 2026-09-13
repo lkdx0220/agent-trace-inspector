@@ -27,8 +27,8 @@ def score_faithfulness(answer: str, contexts: str) -> Optional[int]:
 
 只输出一个整数（0-5）："""
     try:
-        result = judge.call_judge(prompt, max_tokens=16)
-        return judge.score_from_judge(result)
+        sample = judge.call_judge_scores(prompt, max_tokens=16)
+        return sample["median"]
     except judge.JudgeUnavailableError:
         return None
 
@@ -51,8 +51,8 @@ def score_answer_relevancy(answer: str, question: str) -> Optional[int]:
 
 只输出一个整数（0-5）："""
     try:
-        result = judge.call_judge(prompt, max_tokens=16)
-        return judge.score_from_judge(result)
+        sample = judge.call_judge_scores(prompt, max_tokens=16)
+        return sample["median"]
     except judge.JudgeUnavailableError:
         return None
 
@@ -77,8 +77,8 @@ def score_context_precision(contexts: str, question: str) -> Optional[int]:
 
 只输出一个整数（0-5）："""
     try:
-        result = judge.call_judge(prompt, max_tokens=16)
-        score = judge.score_from_judge(result)
+        sample = judge.call_judge_scores(prompt, max_tokens=16)
+        score = sample["median"]
     except judge.JudgeUnavailableError:
         return None
     if score == 0:
@@ -106,7 +106,7 @@ def score_context_recall(contexts: str, reference_answer: str) -> Optional[int]:
 
 只输出一个整数（0-5）："""
     try:
-        result = judge.call_judge(prompt, max_tokens=16)
-        return judge.score_from_judge(result)
+        sample = judge.call_judge_scores(prompt, max_tokens=16)
+        return sample["median"]
     except judge.JudgeUnavailableError:
         return None

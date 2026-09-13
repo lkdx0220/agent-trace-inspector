@@ -35,7 +35,7 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
         if "error" in r:
             ragas_str = "N/A"
             mc_str = "N/A"
-            rows += f'<tr class="row-error"><td>{esc(qid)}</td><td>{esc(r.get("category",""))}</td><td class="td-err">错误: {esc(r["error"][:60])}</td><td>{ragas_str}</td><td>{mc_str}</td></tr>'
+            rows += f'<tr class="row-error"><td>{esc(qid)}</td><td>{esc(r.get("category",""))}</td><td class="td-err">错误: {esc(r["error"][:60])}</td><td>{ragas_str}</td><td>{mc_str}</td><td>-</td></tr>'
             continue
 
         ragas = r["ragas"]
@@ -45,7 +45,7 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
         cr_s = ragas.get("context_recall", "?")
 
         def color_bar(score):
-            if isinstance(score, int) and score >= 0:
+            if isinstance(score, (int, float)) and score >= 0:
                 pct = score / 5 * 100
                 if score >= 4: c = "#5cb878"
                 elif score >= 2: c = "#c9a96e"
@@ -74,7 +74,15 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
             mc_str = f'<span style="color:#e06060">违规: {",".join(esc(x) for x in mnc.get("violations",[])[:3])}</span>'
 
         elapsed = r.get("elapsed", 0)
-        rows += f'<tr><td><a href="#{esc(qid)}">{esc(qid)}</a></td><td>{esc(r["category"])}</td><td>{esc(r["question"][:40])}...</td><td>{ragas_html}</td><td>{mc_str}</td><td>{esc("{:.0f}s".format(elapsed))}</td></tr>'
+        init_s = r.get("init_seconds")
+        agent_s = r.get("agent_seconds")
+        time_text = esc("{:.0f}s".format(elapsed))
+        if init_s is not None or agent_s is not None:
+            time_text += esc(" (init {:.0f}s / agent {:.0f}s)".format(float(init_s or 0), float(agent_s or 0)))
+        judge_badge = ""
+        if r.get("judge_valid") is False:
+            judge_badge = '<span style="color:#e06060"> | Judge不可用</span>'
+        rows += f'<tr><td><a href="#{esc(qid)}">{esc(qid)}</a></td><td>{esc(r["category"])}</td><td>{esc(r["question"][:40])}...</td><td>{ragas_html}</td><td>{mc_str}</td><td>{time_text}{judge_badge}</td></tr>'
 
     # 详细卡片
     cards = ""
@@ -94,13 +102,29 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
         judge_note = ""
         if r.get("judge_valid") is False:
             judge_note = f'<p class="err">Judge 不可用：{"；".join(r.get("judge_errors") or [])}；该样本 RAGAS 分数无效。</p>'
+        trunc = r.get("judge_truncation") or {}
+        trunc_note = ""
+        if trunc.get("answer") or trunc.get("contexts") or trunc.get("reference"):
+            flags = [name for name in ("answer", "contexts", "reference") if trunc.get(name)]
+            limits = trunc.get("limits") or {}
+            trunc_note = (
+                '<p class="err">Judge 窗口截断：'
+                + "、".join(flags)
+                + f" 超出配置上限 {limits}，该样本的 RAGAS 分数可能偏低。</p>"
+            )
 
         # 显式先切片再转义，避免后续重构时截断转义后的 HTML 实体。
         ctx_excerpt = (r.get("contexts") or "（无）")[:5000]
+        time_meta = "{:.0f}s".format(r.get("elapsed", 0))
+        if r.get("init_seconds") is not None or r.get("agent_seconds") is not None:
+            time_meta += " (init {:.0f}s / agent {:.0f}s)".format(
+                float(r.get("init_seconds") or 0), float(r.get("agent_seconds") or 0)
+            )
+        judge_meta = "" if r.get("judge_valid") is not False else " | Judge不可用"
         cards += f'''
 <div class="card" id="{esc(qid)}">
   <h3>{esc(qid)}: {esc(r["question"])}</h3>
-  <div class="meta">{esc(r["category"])} | {esc(r.get("difficulty",""))} | {esc("{:.0f}s".format(r.get("elapsed", 0)))}
+  <div class="meta">{esc(r["category"])} | {esc(r.get("difficulty",""))} | {esc(time_meta)}{esc(judge_meta)}
     {f'| {esc(r.get("tool_count",0))} 次工具调用' if r.get("tool_count") else ""}
     {f'| {esc(r.get("eval_mode",""))}' if r.get("eval_mode") == "manual" else ""}
   </div>
@@ -108,6 +132,7 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
   <div class="section">
     <h4>RAGAS 评分</h4>
     {judge_note}
+    {trunc_note}
     <table class="ragas-table">
       <tr><td>Faithfulness（忠实度）</td><td>{fmt_score(ragas.get("faithfulness"))}/5</td><td>答案是否基于检索内容，无编造</td></tr>
       <tr><td>Answer Relevancy（相关性）</td><td>{fmt_score(ragas.get("answer_relevancy"))}/5</td><td>答案是否紧扣问题</td></tr>
@@ -235,7 +260,7 @@ footer{{text-align:center;padding:20px;color:var(--text-muted);font-size:12px;bo
 
 <h2>汇总表</h2>
 <table class="summary-table">
-<tr><th>ID</th><th>类别</th><th>问题</th><th>RAGAS (F·A·P·R)</th><th>关键词</th><th>耗时</th></tr>
+<tr><th>ID</th><th>类别</th><th>问题</th><th>RAGAS (F·A·P·R)</th><th>关键词</th><th>耗时 / 状态</th></tr>
 {rows}
 </table>
 

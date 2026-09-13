@@ -21,6 +21,7 @@ INSPECTOR_DIR = Path(__file__).resolve().parents[1]
 if str(INSPECTOR_DIR) not in sys.path:
     sys.path.insert(0, str(INSPECTOR_DIR))
 
+from evaluator import config as evaluator_config  # noqa: E402
 from evaluator import harness  # noqa: E402
 from evaluator.manifest import build_manifest  # noqa: E402
 from evaluator.report import generate_html  # noqa: E402
@@ -48,12 +49,24 @@ def main(argv=None) -> int:
     parser.add_argument("--ids", default="", help="只跑指定题，逗号分隔")
     parser.add_argument("--limit", type=int, default=0, help="最多跑几题（调试用）")
     parser.add_argument("--timeout", type=int, default=0, help="单题超时秒数；默认 genshin=300，doctor=900")
-    parser.add_argument("--judge-model", default="deepseek-chat")
+    parser.add_argument("--config", default="", help="evaluator 配置文件路径；默认 evaluator/config.yaml，不存在则 config.example.yaml")
+    parser.add_argument("--judge-model", default="", help="覆盖配置里的 judge.model")
     parser.add_argument("--force", action="store_true", help="忽略缓存，全部重跑")
     parser.add_argument("--no-report", action="store_true", help="不生成 HTML 报告")
     parser.add_argument("--save-db", action="store_true", help="跑完后把结果桥接写入 inspector.db（Web UI 用）")
     parser.add_argument("--name", default="", help="Run 显示名称，仅在 --save-db 时使用")
     args = parser.parse_args(argv)
+
+    config_path = evaluator_config.config_path_for_manifest(args.config)
+    try:
+        config = evaluator_config.load_config(args.config)
+    except RuntimeError as exc:
+        print(f"[错误] {exc}")
+        return 2
+    if not config_path:
+        print("[错误] 没有找到 evaluator 配置文件（config.yaml / config.example.yaml）")
+        return 2
+    print(f"[config] {config_path}")
 
     workspace = args.workspace or _default_workspace()
     if args.cases:
@@ -71,7 +84,10 @@ def main(argv=None) -> int:
         return 2
 
     run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{random.randint(1000, 9999)}"
-    runs_dir = Path(args.runs_dir) if args.runs_dir else INSPECTOR_DIR / "runs"
+    runs_dir_value = str(args.runs_dir or evaluator_config.config_value(config, "harness.runs_dir", "runs") or "runs")
+    runs_dir = Path(runs_dir_value)
+    if not runs_dir.is_absolute():
+        runs_dir = INSPECTOR_DIR / runs_dir
     run_dir = runs_dir / run_id
     results_dir = run_dir / "results"
     manifest_path = run_dir / "manifest.json"
@@ -87,15 +103,27 @@ def main(argv=None) -> int:
         print("[错误] 过滤后没有题目")
         return 2
 
-    timeout_seconds = args.timeout or (900 if args.adapter == "doctor" else 300)
+    default_timeout = 900 if args.adapter == "doctor" else 300
+    configured_timeout = evaluator_config.config_value(config, "harness.timeout_seconds", None)
+    timeout_seconds = args.timeout or max(int(configured_timeout or 0), default_timeout)
+    judge_model = args.judge_model or str(evaluator_config.config_value(config, "judge.model", "deepseek-chat"))
+    scorer_version = "evaluator-phase2-1.0"
+    hit_rate_threshold = float(
+        evaluator_config.config_value(config, "scoring.must_contain_default_hit_rate", 0.8) or 0.8
+    )
 
     judge_settings = judge.JudgeSettings(
-        model=args.judge_model,
+        model=judge_model,
+        temperature=float(evaluator_config.config_value(config, "judge.params.temperature", 0.0) or 0.0),
+        max_tokens=int(evaluator_config.config_value(config, "judge.params.max_tokens", 512) or 512),
+        thinking=str(evaluator_config.config_value(config, "judge.params.thinking", "disabled") or "disabled"),
+        contexts_chars=int(evaluator_config.config_value(config, "judge.window.contexts_chars", 60000) or 60000),
+        answer_chars=int(evaluator_config.config_value(config, "judge.window.answer_chars", 20000) or 20000),
+        reference_chars=int(evaluator_config.config_value(config, "judge.window.reference_chars", 20000) or 20000),
+        repeat=max(1, int(evaluator_config.config_value(config, "judge.repeat", 2) or 2)),
+        scorer_version=scorer_version,
         workspace=workspace,
         cache_path=str(cache_path),
-        contexts_chars=60000,
-        answer_chars=20000,
-        reference_chars=20000,
     )
     judge.configure(judge_settings)
 
@@ -112,13 +140,15 @@ def main(argv=None) -> int:
             "temperature": judge_settings.temperature,
             "max_tokens": judge_settings.max_tokens,
             "thinking": judge_settings.thinking,
+            "repeat": judge_settings.repeat,
         },
         judge_window={
             "contexts_chars": judge_settings.contexts_chars,
             "answer_chars": judge_settings.answer_chars,
             "reference_chars": judge_settings.reference_chars,
         },
-        scorer_version="phase2-1.0",
+        scorer_version=scorer_version,
+        config_path=config_path,
         adapter_version="1.0",
         notes=f"{args.adapter} adapter",
     )
@@ -135,6 +165,7 @@ def main(argv=None) -> int:
         manifest_path=str(manifest_path),
         timeout_seconds=timeout_seconds,
         force=args.force,
+        hit_rate_threshold=hit_rate_threshold,
     )
     judge.save_cache()
 

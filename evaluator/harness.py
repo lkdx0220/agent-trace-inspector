@@ -15,7 +15,7 @@ from evaluator.contract import AgentResult, AgentTimings
 from evaluator.manifest import RunManifest, sha256_text
 from evaluator.scorers import judge, score_case
 
-RESULT_SCHEMA_VERSION = "2"
+RESULT_SCHEMA_VERSION = "3"
 
 
 def content_digest(result: Dict[str, Any]) -> str:
@@ -36,6 +36,8 @@ def content_digest(result: Dict[str, Any]) -> str:
         "agent_seconds": result.get("agent_seconds"),
         "judge_valid": result.get("judge_valid"),
         "judge_errors": result.get("judge_errors"),
+        "judge_samples": result.get("judge_samples"),
+        "judge_truncation": result.get("judge_truncation"),
     }
     payload = json.dumps(core, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -184,6 +186,8 @@ def _build_result_row(case: Dict[str, Any], agent_result: AgentResult, score: Di
         "citation_result": score.get("citation_result"),
         "judge_valid": score.get("judge_valid"),
         "judge_errors": score.get("judge_errors", []),
+        "judge_samples": score.get("judge_samples", []),
+        "judge_truncation": score.get("judge_truncation", {}),
         "keyword_judge_unavailable": score.get("keyword_judge_unavailable", {}),
         "elapsed": round(float(timings.init_seconds or 0) + float(timings.agent_seconds or 0), 1),
         "init_seconds": timings.init_seconds,
@@ -211,6 +215,7 @@ def run_evalset(
     manifest_path: str = "",
     timeout_seconds: int = 300,
     force: bool = False,
+    hit_rate_threshold: float = 0.8,
 ) -> List[Dict[str, Any]]:
     """跑完整题集：子进程 adapter + 打分 + 每题落盘 + manifest 更新。"""
     out_dir = Path(results_dir)
@@ -245,6 +250,7 @@ def run_evalset(
             agent_result.contexts,
             reference=str(case.get("reference_answer") or ""),
             eval_mode=str(case.get("eval_mode") or ""),
+            hit_rate_threshold=hit_rate_threshold,
         )
         row = _build_result_row(case, agent_result, score)
         rows.append(row)

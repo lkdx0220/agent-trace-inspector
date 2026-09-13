@@ -24,7 +24,7 @@ judge:
   # 判分窗口：默认给足；上限只防超长 prompt，不用于日常截断
   window:
     contexts_chars: 60000
-    answer_chars: 20000
+    answer_chars: 40000  # 长答案（如 C4 约 20k 字符）不再贴边截断；超过时会显式标记 judge_truncation
     reference_chars: 20000
   # 没有 seed 时同题重复评分，取中位并记录两次结果
   repeat: 2

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import statistics
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -29,9 +30,10 @@ class JudgeSettings:
     max_tokens: int = 512
     thinking: str = "disabled"
     contexts_chars: int = 60000
-    answer_chars: int = 20000
+    answer_chars: int = 40000
     reference_chars: int = 20000
-    repeat: int = 1
+    repeat: int = 2
+    scorer_version: str = "evaluator-phase2-1.0"
     base_url: str = "https://api.deepseek.com/v1/chat/completions"
     api_key_env: str = "DEEPSEEK_API_KEY"
     workspace: str = ""
@@ -51,6 +53,7 @@ class JudgeUnavailableError(RuntimeError):
 
 _SETTINGS = JudgeSettings()
 _JUDGE_ERRORS: List[str] = []
+_JUDGE_SAMPLES: List[Dict[str, Any]] = []
 _CACHE: Dict[str, str] = {}
 _CACHE_LOADED = False
 
@@ -90,6 +93,16 @@ def reset_errors() -> None:
 
 def get_errors() -> List[str]:
     return list(_JUDGE_ERRORS)
+
+
+def reset_samples() -> None:
+    """清空本次 score_case 的 judge 重复采样记录。"""
+    _JUDGE_SAMPLES.clear()
+
+
+def get_samples() -> List[Dict[str, Any]]:
+    """返回本次 score_case 的重复采样明细（repeat 次 + 中位数）。"""
+    return [dict(item) for item in _JUDGE_SAMPLES]
 
 
 def redact_sensitive(text: str) -> str:
@@ -170,7 +183,12 @@ def untrusted(label: str, text: str) -> str:
     )
 
 
-def _cache_key(prompt: str, max_tokens: int) -> str:
+def _cache_key(prompt: str, max_tokens: int, attempt: int = 0) -> str:
+    """缓存 key 必须包含所有会影响打分的参数。
+
+    旧实现只有 prompt/max_tokens/model/temperature/base_url，换窗口、换
+    repeat、换 scorer_version 时会错误命中旧分。
+    """
     settings = get_settings()
     payload = json.dumps(
         {
@@ -179,6 +197,12 @@ def _cache_key(prompt: str, max_tokens: int) -> str:
             "model": settings.model,
             "temperature": settings.temperature,
             "base_url": settings.base_url,
+            "repeat": int(settings.repeat or 1),
+            "attempt": int(attempt or 0),
+            "scorer_version": settings.scorer_version,
+            "contexts_chars": settings.contexts_chars,
+            "answer_chars": settings.answer_chars,
+            "reference_chars": settings.reference_chars,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -214,11 +238,11 @@ def save_cache() -> None:
         pass
 
 
-def call_judge(prompt: str, max_tokens: Optional[int] = None) -> str:
-    """调用 judge；失败抛 JudgeUnavailableError，成功返回 content。"""
+def _call_judge_once(prompt: str, max_tokens: Optional[int] = None, attempt: int = 0) -> str:
+    """单次 judge 调用；失败抛 JudgeUnavailableError，成功返回 content。"""
     settings = get_settings()
     limit = int(max_tokens or settings.max_tokens)
-    key = _cache_key(prompt, limit)
+    key = _cache_key(prompt, limit, attempt)
     if key in _CACHE:
         return _CACHE[key]
 
@@ -274,6 +298,40 @@ def call_judge(prompt: str, max_tokens: Optional[int] = None) -> str:
         _judge_fail("format", f"empty content (finish_reason={choice.get('finish_reason')})")
     _CACHE[key] = content
     return content
+
+
+def call_judge(prompt: str, max_tokens: Optional[int] = None) -> str:
+    """单次 judge 调用（用于语义关键词的是/否裁判，不做 repeat）。"""
+    return _call_judge_once(prompt, max_tokens, attempt=0)
+
+
+def call_judge_scores(prompt: str, max_tokens: Optional[int] = None) -> Dict[str, Any]:
+    """重复调用 judge 并返回明细。
+
+    repeat 来自 JudgeSettings；没有 seed 时同题跑 N 次取中位数，
+    两次原始分数都记录在 samples 里，便于人工核对噪声。
+    """
+    settings = get_settings()
+    limit = int(max_tokens or settings.max_tokens)
+    repeat = max(1, int(settings.repeat or 1))
+    scores: List[int] = []
+    raws: List[str] = []
+    for attempt in range(repeat):
+        content = _call_judge_once(prompt, limit, attempt=attempt)
+        score = score_from_judge(content)
+        scores.append(score)
+        raws.append(content)
+    median = statistics.median(scores)
+    if isinstance(median, float) and median.is_integer():
+        median = int(median)
+    sample = {
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
+        "scores": scores,
+        "median": median,
+        "raws": [redact_sensitive(raw) for raw in raws],
+    }
+    _JUDGE_SAMPLES.append(sample)
+    return sample
 
 
 def score_from_judge(result: str, max_score: int = 5) -> int:

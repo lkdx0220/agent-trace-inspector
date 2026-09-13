@@ -15,9 +15,22 @@ def score_case(
     contexts: str,
     reference: str = "",
     eval_mode: str = "",
+    hit_rate_threshold: float = 0.8,
 ) -> Dict[str, Any]:
     """对一题的 answer/contexts 打分，返回与旧 harness 兼容的结果结构。"""
     judge.reset_errors()
+    judge.reset_samples()
+    settings = judge.get_settings()
+    truncation = {
+        "answer": len(answer or "") > int(settings.answer_chars),
+        "contexts": len(contexts or "") > int(settings.contexts_chars),
+        "reference": len(reference or "") > int(settings.reference_chars),
+        "limits": {
+            "answer_chars": settings.answer_chars,
+            "contexts_chars": settings.contexts_chars,
+            "reference_chars": settings.reference_chars,
+        },
+    }
     question = str(case.get("question") or "")
     reference_answer = reference or str(case.get("reference_answer") or "")
     mode = eval_mode or str(case.get("eval_mode") or "auto")
@@ -51,7 +64,7 @@ def score_case(
         variant_results = []
         keyword_reasons = []
     else:
-        keyword_result = keywords.check_case_keywords(case, answer)
+        keyword_result = keywords.check_case_keywords(case, answer, hit_rate_threshold=hit_rate_threshold)
         must_contain_result = keyword_result["must_contain_result"]
         must_not_contain_result = keyword_result["must_not_contain_result"]
         matched_variant = keyword_result.get("matched_variant")
@@ -79,6 +92,8 @@ def score_case(
         "citation_result": citation_result,
         "judge_valid": judge_valid,
         "judge_errors": judge_errors,
+        "judge_samples": judge.get_samples(),
+        "judge_truncation": truncation,
         "keyword_judge_unavailable": {
             "must_contain": must_contain_result.get("semantic_unavailable", []),
             "must_not_contain": must_not_contain_result.get("semantic_unavailable", []),
