@@ -21,6 +21,7 @@ RESULT_SCHEMA_VERSION = "2"
 def content_digest(result: Dict[str, Any]) -> str:
     core = {
         "id": result.get("id"),
+        "adapter": result.get("adapter"),
         "question": result.get("question"),
         "category": result.get("category"),
         "answer": result.get("answer"),
@@ -85,18 +86,26 @@ def run_case(
     cwd: Optional[str] = None,
 ) -> AgentResult:
     """起一个内置 adapter 子进程跑单题；超时直接 kill。"""
-    if adapter_name != "genshin":
+    if adapter_name == "genshin":
+        adapter_module = "evaluator.adapters.genshin"
+    elif adapter_name == "doctor":
+        adapter_module = "evaluator.adapters.doctor"
+    else:
         return AgentResult(status="agent_error", error=f"未知 adapter: {adapter_name}", adapter=adapter_name)
     payload = {
         "case_id": str(case.get("id") or ""),
         "question": str(case.get("question") or ""),
         "context": str(case.get("context") or ""),
+        "run_id": str(case.get("run_id") or ""),
+        "target_case_id": str(case.get("target_case_id") or ""),
+        "project_path": str(case.get("project_path") or ""),
+        "case": case,
     }
     run_cwd = cwd or str(Path(__file__).resolve().parents[1])
     started = time.time()
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "evaluator.adapters.genshin"],
+            [sys.executable, "-m", adapter_module],
             input=json.dumps(payload, ensure_ascii=False),
             capture_output=True,
             text=True,
@@ -110,7 +119,7 @@ def run_case(
         return AgentResult(
             status="timeout",
             error=f"adapter 超时（{timeout_seconds}s，子进程已终止）",
-            adapter="",
+            adapter=adapter_name,
             timings=AgentTimings(init_seconds=0.0, agent_seconds=round(time.time() - started, 1)),
         )
 
@@ -118,7 +127,7 @@ def run_case(
         return AgentResult(
             status="agent_error",
             error=f"adapter 退出码 {proc.returncode}: {(proc.stderr or '')[-500:]}",
-            adapter="",
+            adapter=adapter_name,
         )
 
     raw = (proc.stdout or "").strip()
@@ -132,7 +141,7 @@ def run_case(
             return AgentResult(
                 status="agent_error",
                 error=f"adapter stdout 不是合法 JSON: {type(exc).__name__}: {exc}",
-                adapter="",
+                adapter=adapter_name,
             )
 
     result = AgentResult.from_dict(data if isinstance(data, dict) else {})
@@ -151,6 +160,7 @@ def _build_result_row(case: Dict[str, Any], agent_result: AgentResult, score: Di
     timings = agent_result.timings
     row = {
         "id": case.get("id"),
+        "adapter": agent_result.adapter,
         "question": case.get("question"),
         "category": case.get("category"),
         "difficulty": case.get("difficulty", ""),
