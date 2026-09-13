@@ -100,6 +100,10 @@ JUDGE_URL = "https://api.deepseek.com/v1/chat/completions"
 JUDGE_TEMPERATURE = 0.0
 # 非推理模型正常只输出一两个 token，保留下限避免个别调用被截断成空串。
 _JUDGE_MIN_TOKENS = 64
+# Judge 可见窗口：默认不做截断，并保留超大安全上限，避免未来超长 prompt 失控。
+JUDGE_MAX_CONTEXT_CHARS = 60000
+JUDGE_MAX_ANSWER_CHARS = 20000
+JUDGE_MAX_REFERENCE_CHARS = 20000
 TIMEOUT_PER_QUESTION = 300  # 单题超时秒数
 
 # 来自 reference_answers_golden.yaml 的参考答案（全文，不做截断）
@@ -249,10 +253,10 @@ def score_faithfulness(answer: str, contexts: str) -> Optional[int]:
     prompt = f"""评估以下答案是否完全基于提供的「检索上下文」生成，没有编造或添加上下文不存在的信息。
 
 【检索上下文】
-{_untrusted("CONTEXTS", contexts[:4000])}
+{_untrusted("CONTEXTS", contexts[:JUDGE_MAX_CONTEXT_CHARS])}
 
 【答案】
-{_untrusted("ANSWER", answer[:2000])}
+{_untrusted("ANSWER", answer[:JUDGE_MAX_ANSWER_CHARS])}
 
 评分标准（0-5）：
 5分：所有声称都能在上下文中找到原文依据，没有任何编造。
@@ -276,7 +280,7 @@ def score_answer_relevancy(answer: str, question: str) -> Optional[int]:
 {_untrusted("QUESTION", question)}
 
 【答案】
-{_untrusted("ANSWER", answer[:2000])}
+{_untrusted("ANSWER", answer[:JUDGE_MAX_ANSWER_CHARS])}
 
 评分标准（0-5）：
 5分：完全扣题，直接回答了问题，没有无关内容。
@@ -302,7 +306,7 @@ def score_context_precision(contexts: str, question: str) -> Optional[int]:
 {_untrusted("QUESTION", question)}
 
 【检索到的内容】
-{_untrusted("CONTEXTS", contexts[:4000])}
+{_untrusted("CONTEXTS", contexts[:JUDGE_MAX_CONTEXT_CHARS])}
 
 评分标准（0-5）：
 5分：检索内容精准命中问题要点，包含了回答所需的核心信息。
@@ -328,10 +332,10 @@ def score_context_recall(contexts: str, reference_answer: str) -> Optional[int]:
     prompt = f"""评估以下「检索到的内容」是否覆盖了「参考答案」中的关键事实。
 
 【参考答案】
-{_untrusted("REFERENCE", reference_answer[:2000])}
+{_untrusted("REFERENCE", reference_answer[:JUDGE_MAX_REFERENCE_CHARS])}
 
 【检索到的内容】
-{_untrusted("CONTEXTS", contexts[:4000])}
+{_untrusted("CONTEXTS", contexts[:JUDGE_MAX_CONTEXT_CHARS])}
 
 评分标准（0-5）：
 5分：参考答案中的所有关键事实都能在检索内容中找到。
@@ -392,7 +396,7 @@ def semantic_keyword_check(answer: str, keyword: str) -> Optional[bool]:
 例如关键词为「未收录」时，「并未包含」「不在列表中」「未提及」等表述均算表达了该含义。
 
 【答案】
-{_untrusted("ANSWER", answer[:2000])}
+{_untrusted("ANSWER", answer[:JUDGE_MAX_ANSWER_CHARS])}
 
 只输出「是」或「否」："""
     try:
@@ -467,7 +471,7 @@ def semantic_forbidden_check(question: str, answer: str, keyword: str) -> Option
 {_untrusted("QUESTION", question or "（未提供）")}
 
 答案：
-{_untrusted("ANSWER", answer[:2500])}
+{_untrusted("ANSWER", answer[:JUDGE_MAX_ANSWER_CHARS])}
 
 判断答案中的「{keyword}」：
 - 如果它是在把提问对象简单定性/等同为“黑暗、邪恶、外来敌人”这类简化标签，输出「是」；
@@ -591,7 +595,8 @@ def check_citations(answer: str, contexts: str) -> Dict[str, Any]:
 
 # ====== 主流程 ======
 def run_agent(question: str, context: str = "") -> Dict[str, Any]:
-    """运行 Agent，返回最终回答和工具返回内容"""
+    """运行 Agent，返回最终回答和工具返回内容（含初始化/执行耗时拆分）"""
+    t0 = time.time()
     # 抑制导入时的打印输出
     import io
     old_stdout = sys.stdout
@@ -603,6 +608,7 @@ def run_agent(question: str, context: str = "") -> Dict[str, Any]:
         sys.stdout = old_stdout
 
     agent = create_agent_workflow()
+    t_ready = time.time()
 
     # 构建状态
     conversation_history = []
@@ -621,10 +627,12 @@ def run_agent(question: str, context: str = "") -> Dict[str, Any]:
     }
 
     sys.stdout = io.StringIO()
+    t_invoke_start = time.time()
     try:
         result = agent.invoke(state)
     finally:
         sys.stdout = old_stdout
+    t_invoke_end = time.time()
 
     # 提取回答
     answer = result.get("final_response", "") or ""
@@ -641,7 +649,13 @@ def run_agent(question: str, context: str = "") -> Dict[str, Any]:
 
     contexts = "\n\n---\n\n".join(tool_contents)
 
-    return {"answer": answer, "contexts": contexts, "tool_count": len(tool_contents)}
+    return {
+        "answer": answer,
+        "contexts": contexts,
+        "tool_count": len(tool_contents),
+        "init_seconds": round(t_ready - t0, 1),
+        "agent_seconds": round(t_invoke_end - t_invoke_start, 1),
+    }
 
 
 def evaluate_one(entry: dict) -> Dict[str, Any]:
@@ -671,13 +685,17 @@ def evaluate_one(entry: dict) -> Dict[str, Any]:
         return {
             "id": qid, "question": question, "category": entry["category"],
             "error": str(e), "elapsed": time.time() - start,
+            "init_seconds": 0, "agent_seconds": 0,
         }
 
     answer = result["answer"]
     contexts = result["contexts"]
+    init_seconds = float(result.get("init_seconds") or 0)
+    agent_seconds = float(result.get("agent_seconds") or 0)
     elapsed = time.time() - start
 
-    print(f"  [完成] 耗时 {elapsed:.1f}s, 回答长度 {len(answer)} 字, 工具返回 {result['tool_count']} 条")
+    print(f"  [完成] 耗时 {elapsed:.1f}s（初始化 {init_seconds:.1f}s + Agent {agent_seconds:.1f}s）, "
+          f"回答长度 {len(answer)} 字, 工具返回 {result['tool_count']} 条")
 
     # 2. RAGAS 评分
     print(f"  [评估] RAGAS 四维评分...")
@@ -739,6 +757,8 @@ def evaluate_one(entry: dict) -> Dict[str, Any]:
         "must_not_contain_result": mnc_result,
         "citation_result": cite_result,
         "elapsed": round(elapsed, 1),
+        "init_seconds": init_seconds,
+        "agent_seconds": agent_seconds,
         "tool_count": result["tool_count"],
         "judge_valid": (
             not _JUDGE_ERRORS
@@ -1039,6 +1059,8 @@ def _content_digest(result: Dict[str, Any]) -> str:
         "must_not_contain_result": result.get("must_not_contain_result"),
         "citation_result": result.get("citation_result"),
         "elapsed": result.get("elapsed"),
+        "init_seconds": result.get("init_seconds"),
+        "agent_seconds": result.get("agent_seconds"),
         "judge_valid": result.get("judge_valid"),
         "judge_errors": result.get("judge_errors"),
     }

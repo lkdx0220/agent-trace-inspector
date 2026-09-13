@@ -189,6 +189,8 @@ API：
 - 默认工作区是 inspector 仓库的上一级目录；目录结构不同时用 `GOLDEN_TEST_WORKSPACE` 指定。
 - 关键行为：
   - Judge 不可用（缺 Key/网络/HTTP/格式错误）会记录 `judge_valid=false`，不再静默变成低分；
+  - 判分窗口默认不做截断（安全上限：上下文 60000 字、答案 20000 字、参考答案 20000 字），避免长上下文被系统性判低；
+  - 新跑的结果会拆分 `init_seconds` / `agent_seconds`，避免把知识库初始化时间算进 Agent 耗时；
   - 答案/上下文/参考答案以 `<<<BEGIN_UNTRUSTED_*>>>` 数据块交给 Judge，并做分隔标记防伪造；
   - 单题超时由父进程 kill 子进程，避免遗留线程；
   - 缓存带 `schema_version`、`question_sha256`、`content_digest` 校验；
