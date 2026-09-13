@@ -86,6 +86,11 @@ def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not record:
         tail = (proc.stdout or "")[-800:]
         raise HTTPException(status_code=500, detail=f"评测已结束但未找到 run {run_id}: {tail}")
+    # 兼容旧 /runs/live 返回结构：除 summary 外，顶层也带一份汇总字段。
+    summary = record.get("summary") or {}
+    for key in ("total_cases", "passed_cases", "failed_cases", "pass_rate", "avg_duration_ms"):
+        if key in summary:
+            record[key] = summary[key]
     return record
 
 

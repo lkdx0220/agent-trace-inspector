@@ -141,12 +141,22 @@ def main(argv=None) -> int:
     passed = sum(
         1
         for r in rows
-        if r.get("error") is None
-        and (r.get("must_contain_result") or {}).get("passed")
-        and (r.get("must_not_contain_result") or {}).get("passed")
+        if not r.get("error")
+        and bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
+            (r.get("must_contain_result") or {}).get("passed")
+            and (r.get("must_not_contain_result") or {}).get("passed")
+        ))
     )
-    failures = [r.get("id") for r in rows if not (r.get("error") is None and (r.get("must_contain_result") or {}).get("passed"))]
-    print(f"[结果] {passed}/{len(rows)} 硬指标通过；失败: {failures}")
+    failures = [
+        r.get("id")
+        for r in rows
+        if r.get("error")
+        or not bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
+            (r.get("must_contain_result") or {}).get("passed")
+            and (r.get("must_not_contain_result") or {}).get("passed")
+        ))
+    ]
+    print(f"[结果] {passed}/{len(rows)} 关键词硬指标通过；失败: {failures}")
 
     if not args.no_report:
         report_path = run_dir / "report.html"
