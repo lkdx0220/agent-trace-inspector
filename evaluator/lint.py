@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 ALLOWED_MATCH = {"literal", "semantic", "structural"}
 ALLOWED_MATCH_MODE = {"all", "any", None}
+ALLOWED_STABILITY = {"stable", "occasional", "noisy", "unmeasured"}
 REQUIRED_FIELDS = ("id", "question", "category", "reference_answer", "must_contain", "must_not_contain")
 
 # 已知的“题面里不该再出现的旧词/错字”，按项目维护。
@@ -132,6 +133,22 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
         match_mode = q.get("match_mode")
         if match_mode not in ALLOWED_MATCH_MODE:
             errors.append(f"{qid or label} match_mode 非法: {match_mode!r}")
+        # 稳定性标签与取票次数：噪声地板 4%-16%，noisy 题必须 >=3 次多数通过才判得住。
+        stability = q.get("stability")
+        if stability is not None and stability not in ALLOWED_STABILITY:
+            errors.append(f"{qid or label} stability 非法: {stability!r}（允许 {sorted(ALLOWED_STABILITY)}）")
+        agent_repeat = q.get("agent_repeat")
+        if agent_repeat is not None:
+            if not isinstance(agent_repeat, int) or isinstance(agent_repeat, bool) or agent_repeat < 1:
+                errors.append(f"{qid or label} agent_repeat 必须是 >=1 的整数: {agent_repeat!r}")
+            elif stability == "noisy" and agent_repeat < 3:
+                warnings.append(f"{qid or label} 标为 noisy 但 agent_repeat={agent_repeat} < 3，判分分辨率不足")
+            elif stability == "stable" and agent_repeat > 1:
+                info.append(f"{qid or label} 标为 stable 但 agent_repeat={agent_repeat}，多跑不额外增加信息")
+            elif agent_repeat % 2 == 0:
+                warnings.append(f"{qid or label} agent_repeat={agent_repeat} 为偶数，会出现平票（当前规则平票判不通过），建议用 1 或 3")
+        if q.get("criteria_version") not in (None, "original", "relaxed"):
+            errors.append(f"{qid or label} criteria_version 非法: {q.get('criteria_version')!r}")
         if not isinstance(q.get("must_contain"), list):
             errors.append(f"{qid or label} must_contain 必须是数组")
         if not isinstance(q.get("must_not_contain"), list):

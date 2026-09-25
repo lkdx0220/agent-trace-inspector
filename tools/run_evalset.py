@@ -55,6 +55,12 @@ def main(argv=None) -> int:
     parser.add_argument("--no-report", action="store_true", help="不生成 HTML 报告")
     parser.add_argument("--save-db", action="store_true", help="跑完后把结果桥接写入 inspector.db（Web UI 用）")
     parser.add_argument("--name", default="", help="Run 显示名称，仅在 --save-db 时使用")
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=0,
+        help="覆盖每题的重复次数（0=按题集 agent_repeat：stable=1/occasional=2/noisy=3，多数通过）",
+    )
     args = parser.parse_args(argv)
 
     config_path = evaluator_config.config_path_for_manifest(args.config)
@@ -166,6 +172,7 @@ def main(argv=None) -> int:
         timeout_seconds=timeout_seconds,
         force=args.force,
         hit_rate_threshold=hit_rate_threshold,
+        repeat_override=args.repeat,
     )
     judge.save_cache()
 

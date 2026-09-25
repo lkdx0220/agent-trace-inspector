@@ -72,6 +72,13 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
             mc_str = f'<span style="color:#e06060">缺: {",".join(esc(x) for x in mc.get("miss",[])[:3])}</span>'
         else:
             mc_str = f'<span style="color:#e06060">违规: {",".join(esc(x) for x in mnc.get("violations",[])[:3])}</span>'
+        # 取票与口径标记：噪声题只看多数票，放宽判据的题分数不可与旧版本横比。
+        if int(r.get("repeat") or 1) > 1:
+            mc_str += ' <span style="color:#9aa7b8">[{} 票]</span>'.format(esc(str(r.get("keyword_votes") or "")))
+        if r.get("stability") == "noisy":
+            mc_str += ' <span style="color:#e0a860">[噪声题]</span>'
+        if r.get("criteria_version") == "relaxed":
+            mc_str += ' <span style="color:#e0a860">[判据已放宽]</span>'
 
         elapsed = r.get("elapsed", 0)
         init_s = r.get("init_seconds")
