@@ -76,3 +76,27 @@ def test_diagnostic_pipeline_unknown_stage_is_evidence_error():
     assert out["ok"] is True
     assert out["status"] == "completed"
     assert "error" in out["data"]
+
+
+def test_lab_check_handler_registry():
+    from app.services.doctor_tools import _LAB_CHECK_HANDLERS
+    assert set(_LAB_CHECK_HANDLERS) == {
+        "trace_replay",
+        "plan_intent",
+        "trace_truth_audit",
+        "prompt_rule",
+        "missing_keyword",
+        "forbidden_keyword",
+        "not_found_tool",
+        "prompt_violation",
+        "zero_tool",
+        "answer_integrity",
+        "generic_failure",
+    }
+
+
+def test_lab_check_unknown_order_category():
+    from app.services.doctor_tools import run_lab_check
+    out = run_lab_check("LO-NOPE", {"lab_orders": [{"id": "LO-NOPE", "category": "no_such_category"}]})
+    assert out["ok"] is False
+    assert "未支持的检查类别" in out["summary"]

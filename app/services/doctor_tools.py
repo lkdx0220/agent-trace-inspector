@@ -15,7 +15,7 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.path_guard import ensure_project_path
 from app.services.subprocess_env import build_child_env
@@ -983,6 +983,194 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
         "summary": "；".join(summary_parts),
     }
 
+def _lab_context(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    trace = ctx.get("trace")
+    result = ctx.get("result") or {}
+    case = ctx.get("case") or {}
+    return {
+        "_ctx": ctx,
+        "trace": trace,
+        "result": result,
+        "case": case,
+        "answer": str(result.get("answer") or ""),
+        "question": str(result.get("question") or case.get("question") or ""),
+        "project_path": str(ctx.get("project_path") or DEFAULT_PROJECT_PATH),
+        "tool_spans": collect_tool_spans(trace),
+        "spans": _walk_spans((trace or {}).get("root_span") or {}) if trace else [],
+    }
+
+
+def _lab_trace_replay(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    tool_spans = c["tool_spans"]
+    calls = []
+    for s in tool_spans:
+        full = s.get("result_full") or s.get("result_preview") or ""
+        calls.append({
+            "span_id": s.get("span_id"),
+            "name": s.get("name"),
+            "status": s.get("status"),
+            "args": s.get("tool_args") or {},
+            "result_length": s.get("result_length"),
+            "preview": str(full)[:300],
+        })
+    answer_ev = next((e for e in _events(c["trace"]) if e.get("event") == "answer_end"), None)
+    data = {
+        "tool_count": len(calls),
+        "tool_calls": calls,
+        "answer_end_event": {k: (str(v)[:200]) for k, v in ((answer_ev or {}).get("data") or {}).items()},
+        "final_answer": c["answer"][:500],
+    }
+    summary = f"共 {len(calls)} 个工具 span；" + ("；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用")
+    return summary, data
+
+
+def _lab_plan_intent(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    signal = _plan_signal(c["trace"])
+    summary = (
+        f"plan 事件 {signal['plan_events']} 次，plan_retry {signal['plan_retry_events']} 次，"
+        f"tool_call_names={signal['tool_call_names'] or '[]'}，"
+        f"tool_skip_reason={signal['tool_skip_reason']}"
+    )
+    return summary, signal
+
+
+def _lab_trace_truth_audit(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    audit = _trace_truth_audit(c["_ctx"])
+    return audit.get("summary", ""), audit
+
+
+def _lab_prompt_rule(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    project_path = c["project_path"]
+    data = {
+        "plan_tool_rule": get_tool_requirement_excerpt(project_path),
+        "answer_prompt_head": get_answer_system_prompt(project_path)[:2500],
+    }
+    return "已读取规划工具规则节选与回答提示词开头", data
+
+
+def _lab_missing_keyword(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    params = order.get("params") or {}
+    kw = params.get("keyword", "")
+    where = _find_where(kw, c["trace"], c["answer"])
+    probe = search_knowledge_base(c["project_path"], f"{c['question']} {kw}", top_k=5)
+    kb_hit = kb_probe_contains(probe, kw)
+    raw_probe = raw_kb_contains(c["project_path"], kw)
+    raw_hit = bool(raw_probe.get("ok") and (raw_probe.get("data") or {}).get("contains"))
+    conclusion = keyword_retrieval_conclusion(kw, where, probe)
+    data = {
+        "keyword": kw,
+        "where": where,
+        "kb_probe": probe,
+        "kb_hit": kb_hit,
+        "raw_probe": raw_probe,
+        "raw_hit": raw_hit,
+        "retrieval_conclusion": conclusion,
+    }
+    summary = f"「{kw}」工具返回={where['tool_results']}，最终答案={where['final_answer']}，知识库检索命中={kb_hit}，原始数据命中={raw_hit}；{conclusion}"
+    return summary, data
+
+
+def _lab_forbidden_keyword(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    params = order.get("params") or {}
+    kw = params.get("keyword", "")
+    where = _find_where(kw, c["trace"], c["answer"])
+    data = {"keyword": kw, "where": where}
+    return f"「{kw}」工具返回={where['tool_results']}，最终答案={where['final_answer']}", data
+
+
+def _lab_not_found_tool(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    params = order.get("params") or {}
+    name = params.get("tool_name") or ""
+    args = params.get("tool_args") or {}
+    first_arg = ""
+    for v in args.values():
+        if isinstance(v, str) and v:
+            first_arg = v
+            break
+    probe = search_knowledge_base(c["project_path"], first_arg or c["question"], top_k=6)
+    aliases = None
+    raw_probe = None
+    if name == "query_character" and first_arg:
+        aliases = inspect_aliases(c["project_path"], first_arg)
+    if first_arg:
+        raw_probe = raw_kb_contains(c["project_path"], first_arg)
+    data = {
+        "tool_name": name,
+        "tool_args": args,
+        "recheck_query": first_arg or c["question"],
+        "kb_probe": probe,
+        "alias_probe": aliases,
+        "raw_probe": raw_probe,
+    }
+    return f"复检 {name}({first_arg or '?'})：知识库检索、原始数据扫描与别名解析已完成", data
+
+
+def _lab_prompt_violation(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    signal = _plan_signal(c["trace"])
+    result = c["result"]
+    data = {
+        "plan_signal": signal,
+        "prompt_pass": result.get("prompt_pass"),
+        "prompt_violations": result.get("prompt_violations") or [],
+        "tool_count": len(c["tool_spans"]),
+    }
+    summary = f"tool_count={len(c['tool_spans'])}，plan={signal['plan_events']}次，retry={signal['plan_retry_events']}次，skip_reason={signal['tool_skip_reason']}"
+    return summary, data
+
+
+def _lab_zero_tool(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    events = [{"event": e.get("event"), "data_keys": list((e.get("data") or {}).keys())} for e in _events(c["trace"])]
+    data = {"events": events, "span_types": [s.get("span_type") for s in c["spans"]], "metadata": (c["trace"] or {}).get("metadata") or {}}
+    return f"确认 0 个工具 span；事件序列={[e['event'] for e in events]}", data
+
+
+def _lab_answer_integrity(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    answer = c["answer"]
+    corpus = _tool_text(c["tool_spans"])
+    if corpus and answer:
+        def grams(s: str) -> set:
+            return set(s[i:i + 4] for i in range(max(0, len(s) - 3)))
+        overlap = grams(answer) & grams(corpus)
+        ratio = len(overlap) / max(1, len(grams(answer)))
+    else:
+        ratio = 0.0
+    short = _short_circuit_answer(answer)
+    data = {
+        "tool_corpus_chars": len(corpus),
+        "answer_chars": len(answer),
+        "4gram_overlap_ratio": round(float(ratio), 4),
+        "short_circuit_pattern": short,
+        "tool_success_with_corpus": bool(corpus) and len(corpus) > 100,
+    }
+    return f"答案与工具返回 4-gram 重合率={ratio:.2%}，短路串={short}", data
+
+
+def _lab_generic_failure(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    trace = c["trace"]
+    result = c["result"]
+    data = {
+        "events": [{"event": e.get("event"), "data": (e.get("data") or {})} for e in _events(trace)][:20],
+        "tool_spans": [s.get("name") for s in c["tool_spans"]],
+        "result": {k: v for k, v in result.items() if k != "answer"},
+    }
+    return "已完成失败兜底重放", data
+
+
+_LAB_CHECK_HANDLERS = {
+    "trace_replay": _lab_trace_replay,
+    "plan_intent": _lab_plan_intent,
+    "trace_truth_audit": _lab_trace_truth_audit,
+    "prompt_rule": _lab_prompt_rule,
+    "missing_keyword": _lab_missing_keyword,
+    "forbidden_keyword": _lab_forbidden_keyword,
+    "not_found_tool": _lab_not_found_tool,
+    "prompt_violation": _lab_prompt_violation,
+    "zero_tool": _lab_zero_tool,
+    "answer_integrity": _lab_answer_integrity,
+    "generic_failure": _lab_generic_failure,
+}
+
+
 def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     """执行一条确定性检查单，返回结构化证据。此函数只能由编排器/LLM 调用，
     其返回内容才会被写入证据库。"""
@@ -991,157 +1179,14 @@ def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     if not order:
         return {"ok": False, "order_id": order_id, "status": "error", "summary": f"未知检查单 {order_id}", "data": {}}
 
-    trace = ctx.get("trace")
-    result = ctx.get("result") or {}
-    case = ctx.get("case") or {}
-    answer = str(result.get("answer") or "")
-    question = str(result.get("question") or case.get("question") or "")
-    project_path = str(ctx.get("project_path") or DEFAULT_PROJECT_PATH)
     category = order.get("category")
-    params = order.get("params") or {}
-    tool_spans = collect_tool_spans(trace)
-    spans = _walk_spans((trace or {}).get("root_span") or {}) if trace else []
-    data: Dict[str, Any] = {}
-    summary = ""
+    handler = _LAB_CHECK_HANDLERS.get(category)
+    if handler is None:
+        return {"ok": False, "order_id": order_id, "status": "error", "summary": f"未支持的检查类别: {category}", "data": {}}
 
     try:
-        if category == "trace_replay":
-            calls = []
-            for s in tool_spans:
-                full = s.get("result_full") or s.get("result_preview") or ""
-                calls.append({
-                    "span_id": s.get("span_id"),
-                    "name": s.get("name"),
-                    "status": s.get("status"),
-                    "args": s.get("tool_args") or {},
-                    "result_length": s.get("result_length"),
-                    "preview": str(full)[:300],
-                })
-            answer_ev = next((e for e in _events(trace) if e.get("event") == "answer_end"), None)
-            data = {
-                "tool_count": len(calls),
-                "tool_calls": calls,
-                "answer_end_event": {k: (str(v)[:200]) for k, v in ((answer_ev or {}).get("data") or {}).items()},
-                "final_answer": answer[:500],
-            }
-            summary = f"共 {len(calls)} 个工具 span；" + ("；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用")
-
-        elif category == "plan_intent":
-            signal = _plan_signal(trace)
-            data = signal
-            summary = (
-                f"plan 事件 {signal['plan_events']} 次，plan_retry {signal['plan_retry_events']} 次，"
-                f"tool_call_names={signal['tool_call_names'] or '[]'}，"
-                f"tool_skip_reason={signal['tool_skip_reason']}"
-            )
-
-        elif category == "trace_truth_audit":
-            audit = _trace_truth_audit(ctx)
-            data = audit
-            summary = audit.get("summary", "")
-
-        elif category == "prompt_rule":
-            data = {
-                "plan_tool_rule": get_tool_requirement_excerpt(project_path),
-                "answer_prompt_head": get_answer_system_prompt(project_path)[:2500],
-            }
-            summary = "已读取规划工具规则节选与回答提示词开头"
-
-        elif category == "missing_keyword":
-            kw = params.get("keyword", "")
-            where = _find_where(kw, trace, answer)
-            probe = search_knowledge_base(project_path, f"{question} {kw}", top_k=5)
-            kb_hit = kb_probe_contains(probe, kw)
-            raw_probe = raw_kb_contains(project_path, kw)
-            raw_hit = bool(raw_probe.get("ok") and (raw_probe.get("data") or {}).get("contains"))
-            conclusion = keyword_retrieval_conclusion(kw, where, probe)
-            data = {
-                "keyword": kw,
-                "where": where,
-                "kb_probe": probe,
-                "kb_hit": kb_hit,
-                "raw_probe": raw_probe,
-                "raw_hit": raw_hit,
-                "retrieval_conclusion": conclusion,
-            }
-            summary = f"「{kw}」工具返回={where['tool_results']}，最终答案={where['final_answer']}，知识库检索命中={kb_hit}，原始数据命中={raw_hit}；{conclusion}"
-
-        elif category == "forbidden_keyword":
-            kw = params.get("keyword", "")
-            where = _find_where(kw, trace, answer)
-            data = {"keyword": kw, "where": where}
-            summary = f"「{kw}」工具返回={where['tool_results']}，最终答案={where['final_answer']}"
-
-        elif category == "not_found_tool":
-            name = params.get("tool_name") or ""
-            args = params.get("tool_args") or {}
-            first_arg = ""
-            for v in args.values():
-                if isinstance(v, str) and v:
-                    first_arg = v
-                    break
-            probe = search_knowledge_base(project_path, first_arg or question, top_k=6)
-            aliases = None
-            raw_probe = None
-            if name == "query_character" and first_arg:
-                aliases = inspect_aliases(project_path, first_arg)
-            if first_arg:
-                raw_probe = raw_kb_contains(project_path, first_arg)
-            data = {
-                "tool_name": name,
-                "tool_args": args,
-                "recheck_query": first_arg or question,
-                "kb_probe": probe,
-                "alias_probe": aliases,
-                "raw_probe": raw_probe,
-            }
-            summary = f"复检 {name}({first_arg or '?'})：知识库检索、原始数据扫描与别名解析已完成"
-
-        elif category == "prompt_violation":
-            signal = _plan_signal(trace)
-            data = {
-                "plan_signal": signal,
-                "prompt_pass": result.get("prompt_pass"),
-                "prompt_violations": result.get("prompt_violations") or [],
-                "tool_count": len(tool_spans),
-            }
-            summary = f"tool_count={len(tool_spans)}，plan={signal['plan_events']}次，retry={signal['plan_retry_events']}次，skip_reason={signal['tool_skip_reason']}"
-
-        elif category == "zero_tool":
-            events = [{"event": e.get("event"), "data_keys": list((e.get("data") or {}).keys())} for e in _events(trace)]
-            data = {"events": events, "span_types": [s.get("span_type") for s in spans], "metadata": (trace or {}).get("metadata") or {}}
-            summary = f"确认 0 个工具 span；事件序列={[e['event'] for e in events]}"
-
-        elif category == "answer_integrity":
-            corpus = _tool_text(tool_spans)
-            if corpus and answer:
-                def grams(s: str) -> set:
-                    return set(s[i:i + 4] for i in range(max(0, len(s) - 3)))
-                overlap = grams(answer) & grams(corpus)
-                ratio = len(overlap) / max(1, len(grams(answer)))
-            else:
-                ratio = 0.0
-            short = _short_circuit_answer(answer)
-            data = {
-                "tool_corpus_chars": len(corpus),
-                "answer_chars": len(answer),
-                "4gram_overlap_ratio": round(float(ratio), 4),
-                "short_circuit_pattern": short,
-                "tool_success_with_corpus": bool(corpus) and len(corpus) > 100,
-            }
-            summary = f"答案与工具返回 4-gram 重合率={ratio:.2%}，短路串={short}"
-
-        elif category == "generic_failure":
-            data = {
-                "events": [{"event": e.get("event"), "data": (e.get("data") or {})} for e in _events(trace)][:20],
-                "tool_spans": [s.get("name") for s in tool_spans],
-                "result": {k: v for k, v in result.items() if k != "answer"},
-            }
-            summary = "已完成失败兜底重放"
-
-        else:
-            return {"ok": False, "order_id": order_id, "status": "error", "summary": f"未支持的检查类别: {category}", "data": {}}
-
+        c = _lab_context(ctx)
+        summary, data = handler(c, order)
         return {
             "ok": True,
             "order_id": order_id,
