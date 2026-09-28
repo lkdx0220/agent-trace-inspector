@@ -1117,6 +1117,99 @@ def _sheet_satisfies_required(
     return False
 
 
+def _gate_validate_kind(p: Dict[str, Any], index: int, issues: List[str]) -> Optional[str]:
+    kind = str(p.get("conclusion_kind") or "")
+    if not kind:
+        issues.append(f"prescriptions[{index}] 缺少 conclusion_kind（可选值: {sorted(CONSISTENCY_KINDS)}）")
+        return None
+    if kind not in CONSISTENCY_KINDS:
+        issues.append(f"prescriptions[{index}] conclusion_kind 非法: {kind}")
+        return None
+    return kind
+
+
+def _gate_validate_assertions(
+    p: Dict[str, Any],
+    index: int,
+    kind: str,
+    sheet: Dict[str, Any],
+    issues: List[str],
+) -> None:
+    assertions = p.get("fact_assertions") or []
+    if not isinstance(assertions, list) or not assertions:
+        issues.append(f"prescriptions[{index}] 缺少 fact_assertions 数组")
+        return
+    required_types = {ft for ft, _, _ in _required_fact_patterns(kind)}
+    # 逐条断言：非必要且无法判定的事实不硬拒；必要事实无法判定或与事实矛盾则拒绝。
+    for j, a in enumerate(assertions):
+        fact_type = str(a.get("fact_type") or "")
+        expected = a.get("expected")
+        if isinstance(expected, str):
+            expected = expected.strip().lower() in {"true", "1", "yes", "是"}
+        actual = _assertion_actual(sheet, a)
+        if actual is None:
+            if fact_type in required_types:
+                issues.append(
+                    f"prescriptions[{index}].fact_assertions[{j}] 无法从确定证据中判定: {a}"
+                )
+            # 非必要断言无法判定时不拒绝，留下但不作为硬证据。
+        elif bool(actual) != bool(expected):
+            issues.append(
+                f"prescriptions[{index}].fact_assertions[{j}] 与事实矛盾: "
+                f"expected={expected} actual={actual}, assertion={a}"
+            )
+
+
+def _gate_required_assertions(
+    p: Dict[str, Any],
+    index: int,
+    kind: str,
+    sheet: Dict[str, Any],
+    issues: List[str],
+) -> None:
+    assertions = p.get("fact_assertions") or []
+    # 规则要求的断言组合必须齐全；若 LLM 没显式写，
+    # 但只要 FactSheet 已能确定该事实且符合 expected，也视为满足。
+    for fact_type, expected, param_field in _required_fact_patterns(kind):
+        matched = False
+        for a in assertions:
+            if str(a.get("fact_type") or "") != fact_type:
+                continue
+            if bool(a.get("expected")) != expected:
+                continue
+            if param_field:
+                key = str((a.get("params") or {}).get(param_field) or "")
+                if not key:
+                    continue
+            matched = True
+            break
+        if not matched and _sheet_satisfies_required(sheet, fact_type, expected, param_field):
+            matched = True
+        if not matched:
+            issues.append(
+                f"prescriptions[{index}] 结论类型 {kind} 缺少必要断言: "
+                f"fact_type={fact_type}, expected={expected}"
+            )
+
+
+def _gate_resolver_alignment(
+    ctx: Dict[str, Any],
+    prescriptions: List[Dict[str, Any]],
+    issues: List[str],
+) -> None:
+    # 结论与 CausalResolver 对齐：流水线已经给出权威归因，医生不能另立结论。
+    resolution = ctx.get("resolution") or {}
+    expected_kind = str(resolution.get("conclusion_kind") or "")
+    if not expected_kind or expected_kind == "other":
+        return
+    kinds = [str(p.get("conclusion_kind") or "") for p in prescriptions]
+    if expected_kind not in kinds:
+        issues.append(
+            f"CausalResolver 判定为 {expected_kind}，但所有 prescription 的 conclusion_kind={kinds}；"
+            "必须至少一条处方与确定性归因一致"
+        )
+
+
 def _conclusion_consistency_gate(
     report: Dict[str, Any],
     ctx: Dict[str, Any],
@@ -1128,77 +1221,14 @@ def _conclusion_consistency_gate(
     sheet = _build_fact_sheet(ctx, evidence_by_order, extra_evidence)
     prescriptions = report.get("prescriptions") or []
     for i, p in enumerate(prescriptions):
-        kind = str(p.get("conclusion_kind") or "")
+        kind = _gate_validate_kind(p, i, issues)
         if not kind:
-            issues.append(f"prescriptions[{i}] 缺少 conclusion_kind（可选值: {sorted(CONSISTENCY_KINDS)}）")
             continue
-        if kind not in CONSISTENCY_KINDS:
-            issues.append(f"prescriptions[{i}] conclusion_kind 非法: {kind}")
-            continue
+        _gate_validate_assertions(p, i, kind, sheet, issues)
+        _gate_required_assertions(p, i, kind, sheet, issues)
 
-        assertions = p.get("fact_assertions") or []
-        if not isinstance(assertions, list) or not assertions:
-            issues.append(f"prescriptions[{i}] 缺少 fact_assertions 数组")
-            continue
-
-        required_patterns = _required_fact_patterns(kind)
-        required_types = {ft for ft, _, _ in required_patterns}
-
-        # 逐条断言：非必要且无法判定的事实不硬拒；必要事实无法判定或与事实矛盾则拒绝。
-        for j, a in enumerate(assertions):
-            fact_type = str(a.get("fact_type") or "")
-            expected = a.get("expected")
-            if isinstance(expected, str):
-                expected = expected.strip().lower() in {"true", "1", "yes", "是"}
-            actual = _assertion_actual(sheet, a)
-            if actual is None:
-                if fact_type in required_types:
-                    issues.append(
-                        f"prescriptions[{i}].fact_assertions[{j}] 无法从确定证据中判定: {a}"
-                    )
-                # 非必要断言无法判定时不拒绝，留下但不作为硬证据。
-            elif bool(actual) != bool(expected):
-                issues.append(
-                    f"prescriptions[{i}].fact_assertions[{j}] 与事实矛盾: "
-                    f"expected={expected} actual={actual}, assertion={a}"
-                )
-
-        # 规则要求的断言组合必须齐全；若 LLM 没显式写，
-        # 但只要 FactSheet 已能确定该事实且符合 expected，也视为满足。
-        for fact_type, expected, param_field in required_patterns:
-            matched = False
-            for a in assertions:
-                if str(a.get("fact_type") or "") != fact_type:
-                    continue
-                if bool(a.get("expected")) != expected:
-                    continue
-                if param_field:
-                    key = str((a.get("params") or {}).get(param_field) or "")
-                    if not key:
-                        continue
-                matched = True
-                break
-            if not matched and _sheet_satisfies_required(sheet, fact_type, expected, param_field):
-                matched = True
-            if not matched:
-                issues.append(
-                    f"prescriptions[{i}] 结论类型 {kind} 缺少必要断言: "
-                    f"fact_type={fact_type}, expected={expected}"
-                )
-
-    # 结论与 CausalResolver 对齐：流水线已经给出权威归因，医生不能另立结论。
-    resolution = ctx.get("resolution") or {}
-    expected_kind = str(resolution.get("conclusion_kind") or "")
-    if expected_kind and expected_kind != "other":
-        kinds = [str(p.get("conclusion_kind") or "") for p in prescriptions]
-        if expected_kind not in kinds:
-            issues.append(
-                f"CausalResolver 判定为 {expected_kind}，但所有 prescription 的 conclusion_kind={kinds}；"
-                "必须至少一条处方与确定性归因一致"
-            )
-
+    _gate_resolver_alignment(ctx, prescriptions, issues)
     return {"valid": not issues, "issues": issues, "fact_sheet": sheet}
-
 
 def _assign_evidence_levels(
     report: Dict[str, Any],

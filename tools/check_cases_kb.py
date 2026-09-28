@@ -22,6 +22,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_KB = REPO.parent / "CASE-原神剧情助手-修改用"
@@ -89,70 +90,105 @@ def _iter_graph_texts(kb: Path):
         yield f"{entry.get('title') or ''}\n{entry.get('story_text') or entry.get('full_text') or ''}"
 
 
+def _collect_literal_words(cases: List[dict]) -> List[str]:
+    return sorted({
+        text for case in cases for _, _, text, match in _keyword_rows(case) if match != "semantic"
+    })
+
+
+def _count_kb_hits(kb: Path, words: List[str], use_graph: bool) -> Tuple[Dict[str, int], Dict[str, int]]:
+    hits = {word: 0 for word in words}
+    for text in _iter_dump_texts(kb):
+        for word in words:
+            if word in text:
+                hits[word] += 1
+    graph_hits = {word: 0 for word in words}
+    if use_graph:
+        for text in _iter_graph_texts(kb):
+            for word in words:
+                if word in text:
+                    graph_hits[word] += 1
+    return hits, graph_hits
+
+
+def _check_one_case(
+    case: dict,
+    hits: Dict[str, int],
+    graph_hits: Dict[str, int],
+    verbose: bool,
+) -> Tuple[List[str], List[str], List[str]]:
+    errors: List[str] = []
+    confirm: List[str] = []
+    warnings: List[str] = []
+    cid = case.get("id")
+    reference = str(case.get("reference_answer") or "")
+    if verbose:
+        print(f"\n--- {cid}　{case.get('category','')}　{case.get('difficulty','')}")
+    semantic_skipped = 0
+    for _source, kind, text, match in _keyword_rows(case):
+        if match == "semantic":
+            semantic_skipped += 1
+            continue
+        total = hits.get(text, 0) + graph_hits.get(text, 0)
+        detail = f"向量语料 {hits.get(text,0)} 段 / 词条图 {graph_hits.get(text,0)} 条"
+        if kind == "must_contain":
+            if total == 0:
+                confirm.append(f"{cid} 必含词「{text}」KB 0 命中：若是专名则必然判 NG（换词或改判据）；若是措辞则需人工确认模型能否自行写出")
+                tag = "待确认"
+            elif total < MIN_HITS_OK:
+                warnings.append(f"{cid} 必含词「{text}」KB 命中仅 {total} 次，边缘（建议 >= {MIN_HITS_OK}）")
+                tag = "WARN"
+            else:
+                tag = "ok"
+            if verbose:
+                print(f"    [{tag}] 必含「{text}」　{detail}")
+        else:
+            if text in reference:
+                errors.append(f"{cid} 锚点「{text}」出现在参考要点里：判据自相矛盾")
+                tag = "ERROR"
+            else:
+                tag = "ok"
+            if verbose:
+                print(f"    [{tag}] 锚点「{text}」　{detail}（有命中是允许的：真实存在但答错的对象）")
+    if verbose and semantic_skipped:
+        print(f"    （跳过 {semantic_skipped} 个 semantic 词：同义改写不要求字面命中）")
+    return errors, confirm, warnings
+
+
+def _print_check_summary(
+    name: str,
+    cases: int,
+    errors: List[str],
+    confirm: List[str],
+    warnings: List[str],
+) -> None:
+    print(f"\n=== 汇总 {name} ===")
+    print(f"题数 {cases}　ERROR {len(errors)}　待确认 {len(confirm)}　WARN {len(warnings)}")
+    for line in errors:
+        print(f"  [ERROR] {line}")
+    for line in confirm:
+        print(f"  [待确认] {line}")
+    for line in warnings:
+        print(f"  [WARN] {line}")
+
+
 def check(cases_path: Path, kb: Path, use_graph: bool = True, verbose: bool = True) -> dict:
     payload = json.loads(cases_path.read_text(encoding="utf-8"))
     cases = payload.get("questions") or []
-    literal_words = sorted({
-        text for case in cases for _, _, text, match in _keyword_rows(case) if match != "semantic"
-    })
+    literal_words = _collect_literal_words(cases)
     if verbose:
         print(f"[扫描] {cases_path.name}：{len(cases)} 题 / 需查 KB 的字面词 {len(literal_words)} 个 …", flush=True)
-    hits = {word: 0 for word in literal_words}
-    for text in _iter_dump_texts(kb):
-        for word in literal_words:
-            if word in text:
-                hits[word] += 1
-    graph_hits = {word: 0 for word in literal_words}
-    if use_graph:
-        for text in _iter_graph_texts(kb):
-            for word in literal_words:
-                if word in text:
-                    graph_hits[word] += 1
+    hits, graph_hits = _count_kb_hits(kb, literal_words, use_graph)
 
     errors, confirm, warnings = [], [], []
     for case in cases:
-        cid = case.get("id")
-        reference = str(case.get("reference_answer") or "")
-        if verbose:
-            print(f"\n--- {cid}　{case.get('category','')}　{case.get('difficulty','')}")
-        semantic_skipped = 0
-        for _source, kind, text, match in _keyword_rows(case):
-            if match == "semantic":
-                semantic_skipped += 1
-                continue
-            total = hits.get(text, 0) + graph_hits.get(text, 0)
-            detail = f"向量语料 {hits.get(text,0)} 段 / 词条图 {graph_hits.get(text,0)} 条"
-            if kind == "must_contain":
-                if total == 0:
-                    confirm.append(f"{cid} 必含词「{text}」KB 0 命中：若是专名则必然判 NG（换词或改判据）；若是措辞则需人工确认模型能否自行写出")
-                    tag = "待确认"
-                elif total < MIN_HITS_OK:
-                    warnings.append(f"{cid} 必含词「{text}」KB 命中仅 {total} 次，边缘（建议 >= {MIN_HITS_OK}）")
-                    tag = "WARN"
-                else:
-                    tag = "ok"
-                if verbose:
-                    print(f"    [{tag}] 必含「{text}」　{detail}")
-            else:
-                if text in reference:
-                    errors.append(f"{cid} 锚点「{text}」出现在参考要点里：判据自相矛盾")
-                    tag = "ERROR"
-                else:
-                    tag = "ok"
-                if verbose:
-                    print(f"    [{tag}] 锚点「{text}」　{detail}（有命中是允许的：真实存在但答错的对象）")
-        if verbose and semantic_skipped:
-            print(f"    （跳过 {semantic_skipped} 个 semantic 词：同义改写不要求字面命中）")
+        e, c, w = _check_one_case(case, hits, graph_hits, verbose)
+        errors.extend(e)
+        confirm.extend(c)
+        warnings.extend(w)
 
     if verbose:
-        print(f"\n=== 汇总 {cases_path.name} ===")
-        print(f"题数 {len(cases)}　ERROR {len(errors)}　待确认 {len(confirm)}　WARN {len(warnings)}")
-        for line in errors:
-            print(f"  [ERROR] {line}")
-        for line in confirm:
-            print(f"  [待确认] {line}")
-        for line in warnings:
-            print(f"  [WARN] {line}")
+        _print_check_summary(cases_path.name, len(cases), errors, confirm, warnings)
     return {"cases": len(cases), "errors": errors, "confirm": confirm, "warnings": warnings}
 
 

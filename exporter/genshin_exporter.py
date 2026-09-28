@@ -21,7 +21,7 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
@@ -100,21 +100,14 @@ def _tool_calls_from_ai(msg: BaseMessage) -> List[ToolCallData]:
     ]
 
 
-def build_trace_from_result(
+def _build_trace_header(
     result: Dict[str, Any],
     question: str,
     started_at: datetime,
-    agent_info: Optional[AgentInfo] = None,
-    project_path: Optional[Path] = None,
-) -> Trace:
-    """把 create_agent_workflow().invoke() 的结果转成 Trace。"""
-    messages: List[BaseMessage] = result.get("messages") or []
-    execution_mode = result.get("execution_mode")
+) -> Tuple[str, str, Span]:
     final_response = result.get("final_response") or ""
-
     trace_id = f"trace_{started_at.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     response_mode = "not_found" if final_response.strip() == "当前知识库未收录。" else "found"
-
     root = Span(
         span_id="span_agent",
         span_type=SpanType.AGENT,
@@ -124,16 +117,16 @@ def build_trace_from_result(
         input={"question": question},
         output={"final_response": final_response, "response_mode": response_mode},
     )
-    step = 0
+    return trace_id, response_mode, root
 
-    def add_span(parent: Span, span: Span) -> Span:
-        nonlocal step
-        step += 1
-        span.step_index = step
-        parent.children.append(span)
-        return span
 
-    # 1) rewrite
+def _build_stage_spans(
+    root: Span,
+    result: Dict[str, Any],
+    question: str,
+    execution_mode: Any,
+    add_span: Any,
+) -> Tuple[Span, Optional[Span]]:
     rewrite = add_span(root, Span(
         span_id="span_rewrite",
         span_type=SpanType.REWRITE,
@@ -144,8 +137,6 @@ def build_trace_from_result(
             "alias_notes": result.get("alias_notes") or "",
         },
     ))
-
-    # 2) assess
     add_span(rewrite, Span(
         span_id="span_assess",
         span_type=SpanType.ASSESS,
@@ -153,10 +144,7 @@ def build_trace_from_result(
         input={"user_query": question},
         output={"execution_mode": execution_mode},
     ))
-
-    # 3) 分支：L1 快速路径 / L2 完整路径
     current_llm_parent: Optional[Span] = None
-
     if execution_mode == "L1":
         current_llm_parent = add_span(rewrite, Span(
             span_id="span_fast_agent",
@@ -175,83 +163,139 @@ def build_trace_from_result(
                 "injected_tools": [],
             },
         ))
+    return rewrite, current_llm_parent
+
+
+def _add_ai_message_span(
+    msg: AIMessage,
+    result: Dict[str, Any],
+    execution_mode: Any,
+    rewrite: Span,
+    current_llm_parent: Optional[Span],
+    add_span: Any,
+    plan_count: int,
+) -> Tuple[Optional[Span], int]:
+    tool_calls = getattr(msg, "tool_calls", None)
+    raw_content = msg.content or ""
+    content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content, ensure_ascii=False)
+    if tool_calls:
+        plan_count += 1
+        if execution_mode == "L2":
+            parent = current_llm_parent or rewrite
+            current_llm_parent = add_span(parent, Span(
+                span_id=f"span_plan_{plan_count}",
+                span_type=SpanType.LLM,
+                name="plan_agent",
+                output={
+                    "execution_plan": content,
+                    "tool_call_names": [tc.get("name") for tc in tool_calls],
+                },
+                tool_calls=_tool_calls_from_ai(msg),
+            ))
+    elif content and "final_response" in result:
+        if execution_mode == "L1" and current_llm_parent is not None:
+            add_span(current_llm_parent, Span(
+                span_id="span_answer_l1",
+                span_type=SpanType.ANSWER,
+                name="answer_agent",
+                output={"final_response": content, "short_circuit": False},
+            ))
+        else:
+            add_span(rewrite, Span(
+                span_id="span_answer",
+                span_type=SpanType.ANSWER,
+                name="answer_agent",
+                output={
+                    "final_response": content,
+                    "short_circuit": content.strip() == "当前知识库未收录。",
+                },
+            ))
+    return current_llm_parent, plan_count
+
+
+def _add_tool_message_span(
+    msg: ToolMessage,
+    messages: List[BaseMessage],
+    rewrite: Span,
+    current_llm_parent: Optional[Span],
+    add_span: Any,
+    step_ref: List[int],
+) -> None:
+    raw_content = msg.content or ""
+    content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content, ensure_ascii=False)
+    status = _status_of_tool_result(content)
+    tc = _find_tool_call(
+        messages[: messages.index(msg)] if msg in messages else messages,
+        getattr(msg, "tool_call_id", None),
+    )
+    args = tc.get("args", {}) if tc else {}
+    tool_name = (
+        tc.get("name")
+        if tc
+        else (getattr(msg, "name", None) or "?")
+    )
+    tool_span = Span(
+        span_id=f"span_tool_{step_ref[0] + 1}",
+        span_type=SpanType.TOOL,
+        name=tool_name or "?",
+        status=status,
+        tool_args=args,
+        tool_call_id=getattr(msg, "tool_call_id", None),
+        result_preview=content[:500],
+        result_full=content,
+        result_length=len(content),
+        meltdown_trigger=(
+            (getattr(msg, "name", "") in MELTDOWN_TRIGGER_TOOLS)
+            and status == SpanStatus.SUCCESS
+        ),
+    )
+    if current_llm_parent is not None:
+        add_span(current_llm_parent, tool_span)
+    else:
+        add_span(rewrite, tool_span)
+
+
+def _capture_source_snapshot(project_path: Optional[Path]) -> Optional[SourceSnapshot]:
+    if project_path is None:
+        return None
+    try:
+        from app.services.source_snapshot import capture_snapshot
+        return SourceSnapshot(**capture_snapshot(str(project_path)))
+    except Exception:
+        return None
+
+
+def build_trace_from_result(
+    result: Dict[str, Any],
+    question: str,
+    started_at: datetime,
+    agent_info: Optional[AgentInfo] = None,
+    project_path: Optional[Path] = None,
+) -> Trace:
+    """把 create_agent_workflow().invoke() 的结果转成 Trace。"""
+    messages: List[BaseMessage] = result.get("messages") or []
+    execution_mode = result.get("execution_mode")
+    trace_id, response_mode, root = _build_trace_header(result, question, started_at)
+
+    step_ref = [0]
+
+    def add_span(parent: Span, span: Span) -> Span:
+        step_ref[0] += 1
+        span.step_index = step_ref[0]
+        parent.children.append(span)
+        return span
+
+    rewrite, current_llm_parent = _build_stage_spans(root, result, question, execution_mode, add_span)
 
     # 4) 扫描消息，生成 plan/answer/tool span
     plan_count = 0
-
     for msg in messages:
         if isinstance(msg, AIMessage):
-            tool_calls = getattr(msg, "tool_calls", None)
-            raw_content = msg.content or ""
-            content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content, ensure_ascii=False)
-
-            if tool_calls:
-                # Plan 阶段（L2）或 fast_agent 阶段（L1）
-                plan_count += 1
-                if execution_mode == "L2":
-                    parent = current_llm_parent or rewrite
-                    current_llm_parent = add_span(parent, Span(
-                        span_id=f"span_plan_{plan_count}",
-                        span_type=SpanType.LLM,
-                        name="plan_agent",
-                        output={
-                            "execution_plan": content,
-                            "tool_call_names": [tc.get("name") for tc in tool_calls],
-                        },
-                        tool_calls=_tool_calls_from_ai(msg),
-                    ))
-            elif content and "final_response" in result:
-                # 最终回答
-                if execution_mode == "L1" and current_llm_parent is not None:
-                    add_span(current_llm_parent, Span(
-                        span_id="span_answer_l1",
-                        span_type=SpanType.ANSWER,
-                        name="answer_agent",
-                        output={"final_response": content, "short_circuit": False},
-                    ))
-                else:
-                    add_span(rewrite, Span(
-                        span_id="span_answer",
-                        span_type=SpanType.ANSWER,
-                        name="answer_agent",
-                        output={
-                            "final_response": content,
-                            "short_circuit": content.strip() == "当前知识库未收录。",
-                        },
-                    ))
+            current_llm_parent, plan_count = _add_ai_message_span(
+                msg, result, execution_mode, rewrite, current_llm_parent, add_span, plan_count,
+            )
         elif isinstance(msg, ToolMessage):
-            raw_content = msg.content or ""
-            content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content, ensure_ascii=False)
-            status = _status_of_tool_result(content)
-            tc = _find_tool_call(
-                messages[: messages.index(msg)] if msg in messages else messages,
-                getattr(msg, "tool_call_id", None),
-            )
-            args = tc.get("args", {}) if tc else {}
-            tool_name = (
-                tc.get("name")
-                if tc
-                else (getattr(msg, "name", None) or "?")
-            )
-            tool_span = Span(
-                span_id=f"span_tool_{step + 1}",
-                span_type=SpanType.TOOL,
-                name=tool_name or "?",
-                status=status,
-                tool_args=args,
-                tool_call_id=getattr(msg, "tool_call_id", None),
-                result_preview=content[:500],
-                result_full=content,
-                result_length=len(content),
-                meltdown_trigger=(
-                    (getattr(msg, "name", "") in MELTDOWN_TRIGGER_TOOLS)
-                    and status == SpanStatus.SUCCESS
-                ),
-            )
-            if current_llm_parent is not None:
-                add_span(current_llm_parent, tool_span)
-            else:
-                add_span(rewrite, tool_span)
+            _add_tool_message_span(msg, messages, rewrite, current_llm_parent, add_span, step_ref)
 
     root.end_time = datetime.now().astimezone()
     duration_ms = int((root.end_time - started_at).total_seconds() * 1000)

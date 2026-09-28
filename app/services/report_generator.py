@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 import requests
 
@@ -39,15 +39,16 @@ def _all_tool_texts(trace: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def generate_analysis_report(
+def _load_report_context(
     run_id: str,
     case_id: str,
-    project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
-) -> str:
+    project_path: str,
+) -> Dict[str, Any]:
     try:
         project_path = str(ensure_project_path(project_path))
     except ValueError as e:
         raise ValueError(str(e))
+
     run = get_run(run_id)
     if not run:
         raise ValueError("Run not found")
@@ -61,47 +62,61 @@ def generate_analysis_report(
     assessment_point = meta.get("assessment_point", "")
 
     answer = result.get("answer") or ""
-    ref_answer = ""
-    # find from test cases? not in run result. We can load from golden yaml? Use saved test case from DB.
     from app.services.eval_store import list_test_cases
     cases = list_test_cases()
     case = next((c for c in cases if c["case_id"] == case_id), None)
-    if case:
-        ref_answer = case.get("expected_answer") or ""
+    ref_answer = (case or {}).get("expected_answer") or ""
+    return {
+        "run_id": run_id,
+        "case_id": case_id,
+        "project_path": project_path,
+        "result": result,
+        "trace": trace,
+        "case": case or {},
+        "meta": meta,
+        "rationale": rationale,
+        "assessment_point": assessment_point,
+        "answer": answer,
+        "ref_answer": ref_answer,
+        "must_contain": (case or {}).get("must_contain", []) or [],
+        "must_not_contain": (case or {}).get("must_not_contain", []) or [],
+        "alternatives": (case or {}).get("alternatives", []) or [],
+    }
 
-    must_contain = (case or {}).get("must_contain", []) or []
-    must_not_contain = (case or {}).get("must_not_contain", []) or []
-    alternatives = (case or {}).get("alternatives", []) or []
+
+def _build_keyword_evidence(ctx: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str], List[str], List[Dict[str, Any]]]:
     kw_result = evaluate_keywords(
-        answer,
+        ctx["answer"],
         TestCase(
-            case_id=case_id,
-            question=result.get("question", ""),
-            expected_answer=ref_answer,
-            must_contain=must_contain,
-            must_not_contain=must_not_contain,
-            match_mode=(case or {}).get("match_mode", "all"),
-            alternatives=alternatives,
+            case_id=ctx["case_id"],
+            question=ctx["result"].get("question", ""),
+            expected_answer=ctx["ref_answer"],
+            must_contain=ctx["must_contain"],
+            must_not_contain=ctx["must_not_contain"],
+            match_mode=ctx["case"].get("match_mode", "all"),
+            alternatives=ctx["alternatives"],
         ),
-        project_path=project_path,
+        project_path=ctx["project_path"],
     )
-    missing = kw_result["miss"]
-    forbidden_in_answer = kw_result["violations"]
-    variant_summary = []
-    for vr in kw_result.get("variant_results", []):
-        variant_summary.append({
+    variant_summary = [
+        {
             "name": vr.get("name", ""),
             "passed": vr.get("passed", False),
             "hit_rate": vr.get("hit_rate", 0),
             "miss": vr.get("miss", []),
             "violations": vr.get("violations", []),
-        })
+        }
+        for vr in kw_result.get("variant_results", [])
+    ]
+    return kw_result, kw_result["miss"], kw_result["violations"], variant_summary
 
-    tool_text = _all_tool_texts(trace) if trace else ""
-    tool_summary = _trace_summary(trace) if trace else "（无 Trace）"
-    prompt_compliance = check_prompt_compliance(trace, project_path) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"}
-    prompt_rule_excerpt = get_tool_requirement_excerpt(project_path)
 
+def _build_report_rows(
+    missing: List[str],
+    forbidden_in_answer: List[str],
+    tool_text: str,
+    rationale: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     missing_rows = []
     for kw in missing:
         in_tools = kw in tool_text
@@ -111,7 +126,6 @@ def generate_analysis_report(
             "reference_context": rationale.get("must_contain", {}).get(kw, ""),
             "why_required": rationale.get("must_contain", {}).get(kw, ""),
         })
-
     bad_rows = []
     for kw in forbidden_in_answer:
         in_tools = kw in tool_text
@@ -121,20 +135,33 @@ def generate_analysis_report(
             "reference_note": rationale.get("must_not_contain", {}).get(kw, ""),
             "why_forbidden": rationale.get("must_not_contain", {}).get(kw, ""),
         })
+    return missing_rows, bad_rows
 
-    prompt = f"""你是 Agent 运行分析报告撰写者。你的任务是**基于证据写一份分析报告**，不做修改建议、不提出优化方案。
+
+def _build_analysis_prompt(
+    ctx: Dict[str, Any],
+    variant_summary: List[Dict[str, Any]],
+    missing_rows: List[Dict[str, Any]],
+    bad_rows: List[Dict[str, Any]],
+    tool_summary: str,
+    tool_text: str,
+    prompt_compliance: Dict[str, Any],
+    prompt_rule_excerpt: str,
+) -> str:
+    result = ctx["result"]
+    return f"""你是 Agent 运行分析报告撰写者。你的任务是**基于证据写一份分析报告**，不做修改建议、不提出优化方案。
 
 【本题考察点】
-{assessment_point}
+{ctx["assessment_point"]}
 
 【用户问题】
 {result.get("question", "")}
 
 【参考答案】
-{ref_answer}
+{ctx["ref_answer"]}
 
 【AI 最终答案】
-{answer}
+{ctx["answer"]}
 
 【答案标准/备选答案（双答案机制）】
 {json.dumps(variant_summary, ensure_ascii=False, indent=2)}
@@ -156,7 +183,7 @@ def generate_analysis_report(
 {tool_text[:4000]}
 
 【关键词语义说明】
-{json.dumps(rationale, ensure_ascii=False, indent=2)}
+{json.dumps(ctx["rationale"], ensure_ascii=False, indent=2)}
 
 【Agent 系统提示词合规检查（只读挂载）】
 {json.dumps(prompt_compliance, ensure_ascii=False, indent=2)}
@@ -181,6 +208,8 @@ def generate_analysis_report(
   - Agent 问题 / 题目设置问题 / 知识库数据问题
 注意：不要给修改建议，只做分析。"""
 
+
+def _call_report_llm(prompt: str, project_path: str, run_id: str, case_id: str) -> str:
     api_keys = get_qwen_endpoints(project_path)
     if not api_keys:
         return "缺少 Qwen API Key"
@@ -217,3 +246,23 @@ def generate_analysis_report(
         except Exception:
             errors.append(f"[{ep.get('source','?')}] 请求异常")
     return "LLM 调用失败: " + " | ".join(errors)
+
+
+def generate_analysis_report(
+    run_id: str,
+    case_id: str,
+    project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
+) -> str:
+    ctx = _load_report_context(run_id, case_id, project_path)
+    _, missing, forbidden_in_answer, variant_summary = _build_keyword_evidence(ctx)
+    trace = ctx["trace"]
+    tool_text = _all_tool_texts(trace) if trace else ""
+    tool_summary = _trace_summary(trace) if trace else "（无 Trace）"
+    prompt_compliance = check_prompt_compliance(trace, ctx["project_path"]) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"}
+    prompt_rule_excerpt = get_tool_requirement_excerpt(ctx["project_path"])
+    missing_rows, bad_rows = _build_report_rows(missing, forbidden_in_answer, tool_text, ctx["rationale"])
+    prompt = _build_analysis_prompt(
+        ctx, variant_summary, missing_rows, bad_rows, tool_summary, tool_text,
+        prompt_compliance, prompt_rule_excerpt,
+    )
+    return _call_report_llm(prompt, ctx["project_path"], run_id, case_id)

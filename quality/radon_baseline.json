@@ -1,23 +1,17 @@
 {
-  "generated_at": "2026-09-29T00:47:43.237704",
+  "generated_at": "2026-09-29T01:17:48.952466",
   "note": "现有 D/E/F 复杂度债务基线。质量门允许这些函数继续以 warning 暴露，但新增 D/E/F 函数会 fail。",
   "functions": [
     "app/services/diagnoser.py::diagnose_run_case",
     "app/services/evaluator.py::_evaluate_single_keyword_variant",
-    "app/services/lab_orders.py::generate_lab_orders",
-    "app/services/metrics.py::compute_trace_metrics",
-    "app/services/project_doctor.py::_conclusion_consistency_gate",
     "app/services/project_doctor.py::_fallback_resolution_report",
     "app/services/project_doctor.py::_final_grounding_check",
-    "app/services/report_generator.py::generate_analysis_report",
     "evaluator/adapters/genshin.py::run_agent",
     "evaluator/harness.py::run_case",
     "evaluator/lint.py::_lint_keyword_item",
     "evaluator/lint.py::_lint_question_meta",
     "evaluator/lint.py::lint_cases",
     "evaluator/report.py::_render_detail_card",
-    "evaluator/scorers/keywords.py::check_case_keywords",
-    "exporter/genshin_exporter.py::build_trace_from_result",
-    "tools/check_cases_kb.py::check"
+    "evaluator/scorers/keywords.py::check_case_keywords"
   ]
 }

@@ -242,3 +242,39 @@ def test_run_evalset_summarize_rows():
     passed, failures = _summarize_rows(rows)
     assert passed == 1
     assert failures == ["Q2"]
+
+
+def test_collect_reason_keywords():
+    from app.services.lab_orders import _collect_reason_keywords
+    reasons = ["缺少必须包含：童话", "缺少必须包含：备份", "出现禁止包含：黑暗"]
+    assert _collect_reason_keywords(reasons, "缺少必须包含：") == ["童话", "备份"]
+    assert _collect_reason_keywords(reasons, "出现禁止包含：") == ["黑暗"]
+
+
+def test_gate_validate_kind():
+    from app.services.project_doctor import _gate_validate_kind, CONSISTENCY_KINDS
+    issues = []
+    assert _gate_validate_kind({"conclusion_kind": "recall_failure"}, 0, issues) == "recall_failure"
+    assert issues == []
+    assert _gate_validate_kind({}, 0, issues) is None
+    assert issues
+    assert "recall_failure" in CONSISTENCY_KINDS
+
+
+def test_metrics_collect_and_summarize_tools():
+    from app.services.metrics import _collect_spans, _summarize_tools
+    root = {"span_type": "agent", "children": [{"span_type": "tool", "name": "hybrid_search", "status": "success"}]}
+    spans = _collect_spans(root)
+    assert len(spans) == 2
+    summary = _summarize_tools([s for s in spans if s.get("span_type") == "tool"])
+    assert summary["tool_names"] == ["hybrid_search"]
+    assert summary["tool_by_name"]["hybrid_search"]["count"] == 1
+
+
+def test_build_trace_header():
+    from datetime import datetime
+    from exporter.genshin_exporter import _build_trace_header
+    trace_id, response_mode, root = _build_trace_header({"final_response": "当前知识库未收录。"}, "Q", datetime.now())
+    assert trace_id.startswith("trace_")
+    assert response_mode == "not_found"
+    assert root.span_type.value == "agent"

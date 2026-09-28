@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 def _ms(a: Any, b: Any) -> int:
@@ -19,25 +19,23 @@ def _ms(a: Any, b: Any) -> int:
         return 0
 
 
-def compute_trace_metrics(trace: Dict[str, Any]) -> Dict[str, Any]:
-    root = trace.get("root_span") or {}
-    spans = []
+def _collect_spans(root: Dict[str, Any]) -> List[Dict[str, Any]]:
+    spans: List[Dict[str, Any]] = []
 
-    def walk(span):
+    def walk(span: Dict[str, Any]) -> None:
         spans.append(span)
         for c in span.get("children", []):
             walk(c)
 
     walk(root)
+    return spans
 
-    tools = [s for s in spans if s.get("span_type") == "tool"]
-    llms = [s for s in spans if s.get("span_type") == "llm"]
+
+def _summarize_tools(tools: List[Dict[str, Any]]) -> Dict[str, Any]:
     total_tool_ms = 0
     tool_by_name: Dict[str, Dict[str, Any]] = {}
     for t in tools:
-        start = t.get("start_time")
-        end = t.get("end_time")
-        d = _ms(start, end)
+        d = _ms(t.get("start_time"), t.get("end_time"))
         total_tool_ms += d
         name = t.get("name") or "?"
         entry = tool_by_name.setdefault(name, {
@@ -51,13 +49,18 @@ def compute_trace_metrics(trace: Dict[str, Any]) -> Dict[str, Any]:
         entry["count"] += 1
         entry[t.get("status") or "success"] += 1
         entry["total_ms"] += d
+    return {
+        "total_tool_ms": total_tool_ms,
+        "tool_by_name": tool_by_name,
+        "tool_names": sorted(tool_by_name.keys()),
+        "not_found": sum(1 for t in tools if t.get("status") == "not_found"),
+        "intercepted": sum(1 for t in tools if t.get("status") == "intercepted"),
+        "errors": sum(1 for t in tools if t.get("status") == "error"),
+        "meltdown": sum(1 for t in tools if t.get("meltdown_trigger")),
+    }
 
-    tool_names = sorted(tool_by_name.keys())
-    not_found = sum(1 for t in tools if t.get("status") == "not_found")
-    intercepted = sum(1 for t in tools if t.get("status") == "intercepted")
-    errors = sum(1 for t in tools if t.get("status") == "error")
-    meltdown = sum(1 for t in tools if t.get("meltdown_trigger"))
 
+def _phase_latency(root: Dict[str, Any], spans: List[Dict[str, Any]]) -> Dict[str, Any]:
     phase_latency = {
         "rewrite": _ms(root.get("children", [{}])[0].get("start_time") if root.get("children") else None,
                       next((c.get("end_time") for c in root.get("children", []) if c.get("span_type") == "rewrite"), None)),
@@ -66,8 +69,6 @@ def compute_trace_metrics(trace: Dict[str, Any]) -> Dict[str, Any]:
         "plan": None,
         "answer": None,
     }
-
-    # 从 spans 中直接取阶段时间
     for p in ("rewrite", "assess", "router", "answer"):
         span = next((s for s in spans if s.get("span_type") == p), None)
         if span:
@@ -75,8 +76,19 @@ def compute_trace_metrics(trace: Dict[str, Any]) -> Dict[str, Any]:
     plan_spans = [s for s in spans if s.get("span_type") == "llm" and s.get("name") in ("plan_agent", "fast_agent")]
     if plan_spans:
         phase_latency["plan"] = sum(_ms(s.get("start_time"), s.get("end_time")) for s in plan_spans)
+    return phase_latency
+
+
+def compute_trace_metrics(trace: Dict[str, Any]) -> Dict[str, Any]:
+    root = trace.get("root_span") or {}
+    spans = _collect_spans(root)
+    tools = [s for s in spans if s.get("span_type") == "tool"]
+    llms = [s for s in spans if s.get("span_type") == "llm"]
+    tool_summary = _summarize_tools(tools)
+    phase_latency = _phase_latency(root, spans)
 
     total_phase = sum(v or 0 for v in phase_latency.values())
+    total_tool_ms = tool_summary["total_tool_ms"]
     total_measured = total_phase + total_tool_ms
     duration = trace.get("duration_ms") or 0
     unattributed_ms = max(0, duration - total_measured)
@@ -89,12 +101,12 @@ def compute_trace_metrics(trace: Dict[str, Any]) -> Dict[str, Any]:
         "span_count": len(spans),
         "tool_count": len(tools),
         "llm_count": len(llms),
-        "unique_tools": tool_names,
-        "tool_metrics": tool_by_name,
-        "not_found_count": not_found,
-        "intercepted_count": intercepted,
-        "error_count": errors,
-        "meltdown_count": meltdown,
+        "unique_tools": tool_summary["tool_names"],
+        "tool_metrics": tool_summary["tool_by_name"],
+        "not_found_count": tool_summary["not_found"],
+        "intercepted_count": tool_summary["intercepted"],
+        "error_count": tool_summary["errors"],
+        "meltdown_count": tool_summary["meltdown"],
         "total_tool_latency_ms": total_tool_ms,
         "avg_tool_latency_ms": round(total_tool_ms / len(tools), 1) if tools else 0,
         "phase_latency_ms": phase_latency,
