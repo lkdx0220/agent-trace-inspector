@@ -203,3 +203,13 @@ def test_lint_keyword_item_semantic_skips_zero_hit():
     assert stats["semantic"] == 1
     assert semantic_skipped == ["Q1:未收录"]
     assert zero_hit == []
+
+
+def test_report_escape_helpers():
+    from evaluator.report import _esc_br, _dot, _color_bar
+    assert "<br>" in _esc_br("a" + chr(10) + "b")
+    assert "&lt;" in _esc_br("<")
+    assert "dot-ok" in _dot(True)
+    assert "dot-fail" in _dot(False)
+    assert "#5cb878" in _color_bar(5)
+    assert "?" in _color_bar(None)

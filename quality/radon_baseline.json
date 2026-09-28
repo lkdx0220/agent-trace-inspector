@@ -16,7 +16,7 @@
     "evaluator/lint.py::_lint_keyword_item",
     "evaluator/lint.py::_lint_question_meta",
     "evaluator/lint.py::lint_cases",
-    "evaluator/report.py::generate_html",
+    "evaluator/report.py::_render_detail_card",
     "evaluator/scorers/keywords.py::check_case_keywords",
     "exporter/genshin_exporter.py::build_trace_from_result",
     "tools/check_cases_kb.py::check",
