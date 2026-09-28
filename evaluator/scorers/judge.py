@@ -10,7 +10,7 @@ import json
 import os
 import re
 import statistics
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -20,7 +20,7 @@ import requests
 try:
     from dotenv import dotenv_values
 except Exception:  # pragma: no cover
-    dotenv_values = None
+    dotenv_values = None  # type: ignore[assignment]
 
 
 @dataclass

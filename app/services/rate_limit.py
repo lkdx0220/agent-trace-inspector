@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Dict, Deque, Tuple
+from typing import Deque, Dict, Tuple
 
 from fastapi import HTTPException, Request
 

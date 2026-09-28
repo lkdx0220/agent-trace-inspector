@@ -15,7 +15,6 @@ input → routing → planning → knowledge_gap → query_alias → recall_snip
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.doctor_tools import (
@@ -25,8 +24,8 @@ from app.services.doctor_tools import (
     _find_where,
     _plan_signal,
     _short_circuit_answer,
-    _trace_truth_audit,
     _tool_text,
+    _trace_truth_audit,
     collect_tool_spans,
     inspect_aliases_multi,
     kb_probe_contains,
@@ -244,14 +243,29 @@ def _run_stage(order: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
             raw_keywords = missing + forbidden + nf_terms
             kb_probe = knowledge_probe_batch(project_path, queries, top_k=5) if queries else {"ok": True, "data": {"queries": {}}}
             raw_probe = raw_kb_contains_multi(project_path, raw_keywords) if raw_keywords else {"ok": True, "data": {}}
-            alias_probe = inspect_aliases_multi(
-                project_path,
-                [c.get("args") and next(iter(c.get("args").values()), "") for c in not_found_tools if c.get("name") == "query_character"],
-            ) if any(c.get("name") == "query_character" for c in not_found_tools) else {"ok": True, "data": {}}
+            char_terms: List[str] = []
+            for c in not_found_tools:
+                if c.get("name") != "query_character":
+                    continue
+                args = c.get("args")
+                if not isinstance(args, dict) or not args:
+                    continue
+                first = next(iter(args.values()), "")
+                if isinstance(first, str):
+                    char_terms.append(first)
+            alias_probe = (
+                inspect_aliases_multi(project_path, char_terms)
+                if char_terms
+                else {"ok": True, "data": {}}
+            )
 
-            kb_queries = (kb_probe.get("data") or {}).get("queries") or {}
-            raw_data = (raw_probe.get("data") or {})
-            alias_data = (alias_probe.get("data") or {})
+            kb_data = kb_probe.get("data")
+            kb_queries = kb_data.get("queries") if isinstance(kb_data, dict) else {}
+            kb_queries = kb_queries or {}
+            raw_probe_data = raw_probe.get("data")
+            raw_data = raw_probe_data if isinstance(raw_probe_data, dict) else {}
+            alias_probe_data = alias_probe.get("data")
+            alias_data = alias_probe_data if isinstance(alias_probe_data, dict) else {}
 
             # 当前提示词/规则视角：用于禁词来源判断，版本适用性由 STG-07 单独说明。
             plan_prompt_text = ""
@@ -426,7 +440,6 @@ def build_fact_sheet(
     """
     trace = ctx.get("trace")
     result = ctx.get("result") or {}
-    case = ctx.get("case") or {}
     answer = str(result.get("answer") or "")
     audit = _trace_truth_audit(ctx)
 
@@ -546,7 +559,6 @@ def resolve_cause(fact_sheet: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, 
 
     只在确定性 FactSheet 上归因；某一步命中后立即返回，不再往更后面的阶段归因。
     """
-    result = ctx.get("result") or {}
     case = ctx.get("case") or {}
     must_contain = [str(k) for k in (case.get("must_contain") or []) if str(k).strip()]
     must_not = [str(k) for k in (case.get("must_not_contain") or []) if str(k).strip()]
@@ -770,7 +782,6 @@ def format_pipeline_for_prompt(
 ) -> str:
     """把 FactSheet 与 CausalResolver 结果压缩成 LLM 可读的权威上下文。"""
     result = ctx.get("result") or {}
-    case = ctx.get("case") or {}
     stage_lines = ["确定性流水线 8/8 已执行："]
     for oid, summary in (fact_sheet.get("stage_summaries") or {}).items():
         stage_lines.append(f"- {oid}: {summary}")

@@ -62,8 +62,6 @@ def generate_lab_orders(
     spans = _span_list(trace)
     tool_spans = [s for s in spans if s.get("span_type") == "tool"]
     answer = str(result.get("answer") or "")
-    actual_tools = [str(t) for t in (result.get("actual_tools") or [])]
-
     # ---- 基础检查：任何病例都做 ----
     add("LO-001", "trace_replay", "重放 Trace 工具调用",
         "这次运行实际调用了哪些工具？每个工具的入参、状态、返回内容是什么？最终答案是否真正使用了工具返回？",
@@ -134,7 +132,7 @@ def generate_lab_orders(
         prompt_pass = prompt_compliance.get("passed")
     violations = list(result.get("prompt_violations") or [])
     if prompt_compliance and prompt_compliance.get("violations"):
-        violations = list(prompt_compliance.get("violations"))
+        violations = [str(v) for v in (prompt_compliance.get("violations") or [])]
     if prompt_pass is False or violations:
         add("LO-PR-01", "prompt_violation", "核对系统提示词合规违规",
             "plan 文本里有没有 tool_skip_reason？plan_retry 执行了几次？为什么最终 tool_call_count=0？这是模型失误还是提示词/代码缺陷？",

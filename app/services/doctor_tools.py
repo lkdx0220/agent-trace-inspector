@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -68,7 +67,7 @@ def _events(trace: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _find_where(keyword: str, trace: Optional[Dict[str, Any]], answer: str) -> Dict[str, Any]:
     """确定性定位一个关键词在 trace 各阶段的位置。"""
-    hits = {"tool_results": False, "final_answer": False, "plan_text": False, "events": []}
+    hits: Dict[str, Any] = {"tool_results": False, "final_answer": False, "plan_text": False, "events": []}
     kw = str(keyword)
     if kw and kw in str(answer or ""):
         hits["final_answer"] = True
@@ -194,7 +193,7 @@ def kb_probe_contains(probe: Dict[str, Any], keyword: str) -> bool:
         return False
     data = probe.get("data") or {}
     queries = data.get("queries") or {}
-    for q, raw in queries.items():
+    for raw in queries.values():
         text = str(raw)
         lines = [line for line in text.splitlines() if line.strip()]
         if not lines:

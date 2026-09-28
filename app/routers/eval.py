@@ -96,6 +96,7 @@ def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _md_to_html(text: str) -> str:
     import markdown
+
     from app.services.html_sanitizer import sanitize_html
     rendered = markdown.markdown(text or "", extensions=["tables", "fenced_code", "nl2br"])
     return sanitize_html(rendered)

@@ -8,8 +8,8 @@ from app.services.auth import require_local_or_token
 from app.services.doctor_tools import DEFAULT_PROJECT_PATH
 from app.services.eval_store import get_prescription, save_prescription
 from app.services.path_guard import ensure_project_path
-from app.services.rate_limit import doctor_rate_limit
 from app.services.project_doctor import prescribe_run_case
+from app.services.rate_limit import doctor_rate_limit
 
 router = APIRouter(prefix="/api", tags=["doctor"], dependencies=[Depends(require_local_or_token)])
 

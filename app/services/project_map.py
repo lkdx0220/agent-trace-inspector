@@ -42,7 +42,7 @@ def _safe_read(path: Path, limit: int = 200000) -> str:
 
 def _iter_code_symbols(text: str) -> List[Dict[str, Any]]:
     """用 AST 提取顶层函数/类名、行号、docstring 首行。"""
-    symbols = []
+    symbols: List[Dict[str, Any]] = []
     try:
         tree = ast.parse(text)
     except SyntaxError:

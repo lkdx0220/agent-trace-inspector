@@ -235,7 +235,7 @@ def aggregate_repeat_rows(case: Dict[str, Any], rows: List[Dict[str, Any]]) -> D
     if repeat == 1:
         row = dict(rows[0])
     else:
-        pick = next((r for r, p in zip(rows, passed) if p == majority), rows[0])
+        pick = next((r for r, p in zip(rows, passed, strict=True) if p == majority), rows[0])
         row = dict(pick)
         row["ragas"] = _median_ragas(rows)
         row["agent_seconds"] = _median([r.get("agent_seconds") for r in rows])

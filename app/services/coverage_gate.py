@@ -44,7 +44,9 @@ def evidence_ids(evidence_by_order: Dict[str, List[Dict[str, Any]]], extra_evide
             ids.add(oid)
     for ev in extra_evidence:
         if ev.get("ok") is not False:
-            ids.add(ev.get("id"))
+            eid = ev.get("id")
+            if eid:
+                ids.add(str(eid))
     return ids
 
 

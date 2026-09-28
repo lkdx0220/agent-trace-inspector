@@ -101,11 +101,11 @@ def _compose_tool_trace(doctor: Dict[str, Any]) -> List[Dict[str, Any]]:
 def run_agent(case: Dict[str, Any]) -> Dict[str, Any]:
     """运行项目医生，返回 AgentResult 兼容 dict。"""
     from evaluator.contract import (
-        AgentResult,
-        AgentTimings,
         STATUS_AGENT_ERROR,
         STATUS_EMPTY,
         STATUS_OK,
+        AgentResult,
+        AgentTimings,
     )
 
     run_id = str(case.get("run_id") or "")

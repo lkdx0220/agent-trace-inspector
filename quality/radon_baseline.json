@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-09-29T00:47:43.237704",
+  "note": "现有 D/E/F 复杂度债务基线。质量门允许这些函数继续以 warning 暴露，但新增 D/E/F 函数会 fail。",
+  "functions": [
+    "app/services/diagnoser.py::diagnose_run_case",
+    "app/services/diagnostic_pipeline.py::_run_stage",
+    "app/services/diagnostic_pipeline.py::build_fact_sheet",
+    "app/services/diagnostic_pipeline.py::resolve_cause",
+    "app/services/doctor_tools.py::_trace_truth_audit",
+    "app/services/doctor_tools.py::run_lab_check",
+    "app/services/evaluator.py::_evaluate_single_keyword_variant",
+    "app/services/lab_orders.py::generate_lab_orders",
+    "app/services/metrics.py::compute_trace_metrics",
+    "app/services/project_doctor.py::_conclusion_consistency_gate",
+    "app/services/project_doctor.py::_fallback_report",
+    "app/services/project_doctor.py::_final_grounding_check",
+    "app/services/project_doctor.py::prescribe_run_case",
+    "app/services/report_generator.py::generate_analysis_report",
+    "evaluator/adapters/genshin.py::run_agent",
+    "evaluator/db_bridge.py::build_case_result",
+    "evaluator/harness.py::run_case",
+    "evaluator/lint.py::lint_cases",
+    "evaluator/report.py::generate_html",
+    "evaluator/scorers/keywords.py::check_case_keywords",
+    "exporter/genshin_exporter.py::build_trace_from_result",
+    "tools/check_cases_kb.py::check",
+    "tools/run_evalset.py::main"
+  ]
+}

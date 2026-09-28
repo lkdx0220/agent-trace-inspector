@@ -96,7 +96,7 @@ def _tool_payload_from_messages(result: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def run_agent(question: str, context: str = "") -> Dict[str, Any]:
     """运行原项目 Agent，返回 AgentResult 兼容 dict。"""
-    from evaluator.contract import AgentResult, AgentTimings, STATUS_AGENT_ERROR, STATUS_EMPTY, STATUS_OK
+    from evaluator.contract import STATUS_AGENT_ERROR, STATUS_EMPTY, STATUS_OK, AgentResult, AgentTimings
 
     case_dir = _case_dir()
     if not os.path.isdir(case_dir):

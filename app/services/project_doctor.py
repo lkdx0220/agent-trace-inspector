@@ -17,17 +17,26 @@ import json
 import os
 import re
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 from app.db import get_trace
 from app.services.coverage_gate import coverage_status, evidence_ids, validate_prescriptions
+from app.services.diagnostic_pipeline import (
+    CONSISTENCY_KINDS as PIPELINE_CONSISTENCY_KINDS,
+)
+from app.services.diagnostic_pipeline import (
+    build_fact_sheet as build_fact_sheet_pipeline,
+)
+from app.services.diagnostic_pipeline import (
+    format_pipeline_for_prompt,
+    generate_pipeline_orders,
+    resolve_cause,
+    run_diagnostic_pipeline,
+)
 from app.services.doctor_tools import (
     DEFAULT_PROJECT_PATH,
-    _events,
-    collect_tool_spans,
     dispatch_llm_tool,
     kb_probe_contains,
     llm_tool_definitions,
@@ -35,14 +44,6 @@ from app.services.doctor_tools import (
 )
 from app.services.eval_store import get_run, list_test_cases
 from app.services.evaluator import check_prompt_compliance
-from app.services.diagnostic_pipeline import (
-    CONSISTENCY_KINDS as PIPELINE_CONSISTENCY_KINDS,
-    build_fact_sheet as build_fact_sheet_pipeline,
-    format_pipeline_for_prompt,
-    generate_pipeline_orders,
-    resolve_cause,
-    run_diagnostic_pipeline,
-)
 from app.services.path_guard import ensure_project_path
 from app.services.project_map import format_project_map, generate_project_map
 from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
@@ -234,7 +235,7 @@ def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpo
         eps = list(endpoints or [])
     if not eps:
         raise RuntimeError("缺少 Qwen API Key")
-    payload = {
+    payload: Dict[str, Any] = {
         "model": DOCTOR_MODEL,
         "messages": messages,
         "tools": tools,
@@ -279,7 +280,7 @@ def _tool_content(result: Dict[str, Any], max_chars: int = MAX_TOOL_CONTENT_CHAR
         "hit", "probe", "root", "evidence", "truncat", "query", "file",
         "reason", "violation", "not_found", "未收录", "未找到",
     )
-    lines = []
+    lines: List[str] = []
     for line in text.splitlines():
         low = line.lower()
         if any(m in low for m in signal_markers):
@@ -1311,7 +1312,6 @@ def prescribe_run_case(
         {"role": "user", "content": f"诊断对象 run={run_id} case={case_id}。8 阶段证据与 CausalResolver 归因已就绪，请输出最终医嘱 JSON。"},
     ]
     final_report: Optional[Dict[str, Any]] = None
-    last_content = ""
 
     for turn in range(1, MAX_LLM_TURNS + 1):
         # 每轮把最新 Verified Claims / Pinned Facts 刷入系统提示词，保持长期记忆。
@@ -1352,7 +1352,6 @@ def prescribe_run_case(
             continue
 
         # LLM 想结束：先过覆盖闸门
-        last_content = content
         missing = [o for o in orders if not any(e.get("ok") for e in evidence_by_order.get(o["id"], []))]
         if missing:
             filled = _autofill_missing(ctx, evidence_by_order)

@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from app.db import get_trace
-from app.services.eval_store import get_diagnosis, get_run, list_test_cases, save_diagnosis
+from app.services.eval_store import get_run, list_test_cases, save_diagnosis
 from app.services.evaluator import check_prompt_compliance
 from app.services.path_guard import ensure_project_path
 from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
@@ -86,7 +84,7 @@ def diagnose_run_case(
 {json.dumps({"缺少必须包含": missing_keywords, "出现禁止包含": bad_keywords}, ensure_ascii=False)}
 
 【Trace 工具调用摘要】
-{_trace_summary(trace)}
+{_trace_summary(trace or {})}
 
 【本题目双答案/备选答案标准】
 {json.dumps(alternatives, ensure_ascii=False, indent=2)}

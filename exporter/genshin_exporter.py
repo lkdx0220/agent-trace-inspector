@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import sys
-import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -52,6 +52,8 @@ def _load_agent_module(project_path: Path):
         sys.path.insert(0, str(root))
 
     spec = importlib.util.spec_from_file_location("genshin_story_agent_inspector", entry)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载原项目入口：{entry}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -175,13 +177,13 @@ def build_trace_from_result(
         ))
 
     # 4) 扫描消息，生成 plan/answer/tool span
-    last_ai_with_tool_calls: Optional[BaseMessage] = None
     plan_count = 0
 
     for msg in messages:
         if isinstance(msg, AIMessage):
             tool_calls = getattr(msg, "tool_calls", None)
-            content = msg.content or ""
+            raw_content = msg.content or ""
+            content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content, ensure_ascii=False)
 
             if tool_calls:
                 # Plan 阶段（L2）或 fast_agent 阶段（L1）
@@ -198,7 +200,6 @@ def build_trace_from_result(
                         },
                         tool_calls=_tool_calls_from_ai(msg),
                     ))
-                last_ai_with_tool_calls = msg
             elif content and "final_response" in result:
                 # 最终回答
                 if execution_mode == "L1" and current_llm_parent is not None:
@@ -219,7 +220,8 @@ def build_trace_from_result(
                         },
                     ))
         elif isinstance(msg, ToolMessage):
-            content = msg.content or ""
+            raw_content = msg.content or ""
+            content = raw_content if isinstance(raw_content, str) else json.dumps(raw_content, ensure_ascii=False)
             status = _status_of_tool_result(content)
             tc = _find_tool_call(
                 messages[: messages.index(msg)] if msg in messages else messages,
@@ -274,7 +276,7 @@ def build_trace_from_result(
             alias_notes=result.get("alias_notes"),
             iteration=result.get("iteration"),
             plan_retry=result.get("plan_retry"),
-            response_mode=response_mode,
+            response_mode=response_mode,  # type: ignore[arg-type]
             run_id=result.get("run_id"),
         ),
         source_snapshot=source_snapshot,
@@ -292,12 +294,12 @@ def _enrich_trace_with_events(trace: Trace, events: list) -> None:
     """
     from datetime import datetime as _dt
 
-    starts = {}
-    ends = {}
-    by_event = {}
-    llm_starts = {}
-    llm_ends = {}
-    plan_events = []
+    starts: Dict[str, Any] = {}
+    ends: Dict[str, Any] = {}
+    by_event: Dict[str, Any] = {}
+    llm_starts: Dict[str, Any] = {}
+    llm_ends: Dict[str, Any] = {}
+    plan_events: List[Any] = []
 
     for ev in events:
         data = ev.get("data") or {}
@@ -402,7 +404,7 @@ def _fill_assess_router_times(trace: Trace, events: list) -> None:
     """给 assess/router 阶段补 start/end，减少未归属时间。"""
     from datetime import datetime as _dt
 
-    by_event = {}
+    by_event: Dict[str, Any] = {}
     for ev in events:
         etype = ev.get("event")
         if etype in ("assess", "route", "rewrite"):
@@ -473,8 +475,8 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
     if parent is None:
         return
 
-    starts = {}
-    ends = {}
+    starts: Dict[str, Any] = {}
+    ends: Dict[str, Any] = {}
     for ev in events:
         data = ev.get("data") or {}
         role = data.get("role")
@@ -496,8 +498,6 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
                 continue
             if role == "answer":
                 # answer 已有 ANSWER Span，不重复添加 LLM span
-                continue
-            if role == "fast" and any(s.span_type == SpanType.LLM and s.name == "fast_agent" for s in []):
                 continue
             name = "plan_agent_retry" if role == "plan_retry" else ("plan_agent" if role == "plan" else "fast_agent")
             span = Span(

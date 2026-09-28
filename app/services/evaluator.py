@@ -128,7 +128,7 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str], project_path:
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    base_payload = {
+    base_payload: Dict[str, Any] = {
         "model": SEMANTIC_JUDGE_MODEL,
         "messages": [
             {"role": "system", "content": "你是一个严谨的语义等价裁判。只输出简短 JSON。"},
@@ -140,7 +140,7 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str], project_path:
 
     # 通过 OpenAI 格式的 thinking.type=disabled 关闭 DeepSeek 思考模式；
     # 若代理/网关不识别该参数，则退化为普通请求。
-    payloads = [
+    payloads: List[Dict[str, Any]] = [
         {**base_payload, "thinking": {"type": "disabled"}},
         base_payload,
     ]
@@ -220,7 +220,7 @@ def semantic_forbidden_batch_check(question: str, answer: str, keywords: List[st
         "temperature": 0,
         "max_tokens": 256,
     }
-    payloads = [
+    payloads: List[Dict[str, Any]] = [
         {**base_payload, "thinking": {"type": "disabled"}},
         base_payload,
     ]
@@ -371,9 +371,9 @@ def evaluate_keywords(answer: str, case: TestCase, project_path: Optional[str] =
     for v in variants:
         r = _evaluate_single_keyword_variant(
             answer,
-            v["must_contain"],
-            v["must_not_contain"],
-            v["match_mode"],
+            list(v["must_contain"] or []),
+            list(v["must_not_contain"] or []),
+            str(v["match_mode"] or "all"),
             question=case.question,
             project_path=project_path,
         )
@@ -507,7 +507,11 @@ def evaluate_trace_for_case(case: TestCase, trace: Optional[Dict[str, Any]], pro
 def compute_run_summary(results: List[RunCaseResult]) -> Dict[str, Any]:
     total = len(results)
     passed = sum(1 for r in results if r.passed)
-    durations = [r.metrics.get("duration_ms") for r in results if r.metrics.get("duration_ms")]
+    durations: List[float] = []
+    for r in results:
+        d = r.metrics.get("duration_ms")
+        if isinstance(d, (int, float)):
+            durations.append(float(d))
     return {
         "total_cases": total,
         "passed_cases": passed,

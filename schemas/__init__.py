@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from schemas.trace import (
-    AgentInfo,
     SCHEMA_VERSION,
+    AgentInfo,
     Span,
     SpanStatus,
     SpanType,

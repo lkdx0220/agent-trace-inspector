@@ -1,0 +1,9 @@
+# 6+1 质量门工具依赖（本机已验证版本，可按需升）
+ruff==0.16.9
+mypy==2.3.1
+radon==6.0.1
+vulture==2.16
+pytest==9.1.1
+pytest-cov==7.0.0
+import-linter==2.15
+coverage==7.16.2

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION: Literal["0.1"] = "0.1"
 
 
 class SpanType(str, Enum):

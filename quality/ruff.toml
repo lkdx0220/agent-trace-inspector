@@ -1,0 +1,21 @@
+# Ruff 质量门配置：只保留高信号规则，避免一上来被风格噪声淹没。
+line-length = 120
+target-version = "py313"
+exclude = [
+  ".venv",
+  "__pycache__",
+  "data",
+  "runs",
+  "quality/reports",
+]
+
+[lint]
+# 只保留高信号规则：
+# E9=语法级错误，F=pyflakes（未使用/未定义/重复定义），B=bugbear（真实 bug 模式），I=导入排序。
+# 不启用 UP（类型标注现代化/编码声明），它会产出大量纯风格改动，第一次上车噪声过大。
+select = ["E9", "F", "B", "I"]
+ignore = [
+  "E501",   # 行长交给 formatter/人工，不在质量门里卡
+  "B008",   # FastAPI Depends 默认参数是正常写法
+  "B904",   # raise ... from 需要逐个判断，先不强制
+]

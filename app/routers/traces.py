@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-from fastapi import APIRouter, Depends, HTTPException
 from typing import Any, Dict, List
 
-from app.db import get_trace, get_timeline, list_traces, save_trace
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.db import get_timeline, get_trace, list_traces, save_trace
 from app.services.auth import require_local_or_token
 from app.services.metrics import compute_trace_metrics
 from app.services.rate_limit import import_rate_limit

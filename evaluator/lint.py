@@ -19,7 +19,6 @@ import argparse
 import glob
 import json
 import os
-import re
 import sys
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
@@ -95,7 +94,7 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
     if not metadata.get("project"):
         warnings.append("metadata.project 为空，建议填项目标识（如 genshin / doctor）")
 
-    keyword_stats = Counter()
+    keyword_stats: Counter = Counter()
     keyword_unclassified = []
     zero_hit: List[Dict[str, str]] = []
     semantic_zero_skipped: List[str] = []
@@ -258,7 +257,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     except Exception:
         pass
     raise SystemExit(main())

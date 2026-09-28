@@ -68,9 +68,9 @@ def build_case_result(
         reasons.extend(f"缺少必须包含：{kw}" for kw in (must_contain_result.get("miss") or []))
         reasons.extend(f"出现禁止包含：{kw}" for kw in (must_not_contain_result.get("violations") or []))
 
-    tools_check = {"passed": None, "missing": [], "actual": [], "expected": []}
-    route_check = {"passed": None, "expected": None, "actual": None}
-    prompt_check = {"passed": None, "violations": [], "evidence": "无 Trace"}
+    tools_check: Dict[str, Any] = {"passed": None, "missing": [], "actual": [], "expected": []}
+    route_check: Dict[str, Any] = {"passed": None, "expected": None, "actual": None}
+    prompt_check: Dict[str, Any] = {"passed": None, "violations": [], "evidence": "无 Trace"}
     if trace:
         tools_check = deterministic.check_expected_tools(trace, case.get("expected_tools") or [])
         route_check = deterministic.check_expected_route(trace, case.get("expected_route"))
@@ -175,7 +175,7 @@ def build_run_record(
         passed_cases=passed_cases,
         failed_cases=total - passed_cases,
         pass_rate=round(passed_cases / total * 100, 1) if total else 0.0,
-        avg_duration_ms=round(sum(durations) / len(durations), 1) if durations else 0.0,
+        avg_duration_ms=round(sum(float(d) for d in durations if isinstance(d, (int, float))) / len(durations), 1) if durations else 0.0,
         results=results,
     )
 

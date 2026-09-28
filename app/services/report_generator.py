@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import requests
 
 from app.db import get_trace
 from app.services.diagnoser import _trace_summary
-from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
 from app.services.eval_store import get_run, save_report
 from app.services.evaluator import check_prompt_compliance, evaluate_keywords
 from app.services.path_guard import ensure_project_path
+from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
 from app.services.system_prompts import get_tool_requirement_excerpt
 from schemas.eval import TestCase
 

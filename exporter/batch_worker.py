@@ -11,7 +11,6 @@ import argparse
 import json
 import sys
 import time
-from pathlib import Path
 
 from exporter.batch_exporter import AgentBatchRunner
 from exporter.safe_paths import ensure_cases_file_path, ensure_project_path_local, ensure_trace_out_path
@@ -30,7 +29,7 @@ def main() -> int:
 
     runner = AgentBatchRunner(project_path)
     try:
-        for idx, case in enumerate(cases, 1):
+        for _idx, case in enumerate(cases, 1):
             case_id = case["case_id"]
             question = case["question"]
             context = case.get("context", "")

@@ -124,7 +124,7 @@ class RunManifest:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunManifest":
         known = {f: data.get(f) for f in cls.__dataclass_fields__ if f in data}
-        return cls(**known)
+        return cls(**known)  # type: ignore[arg-type]
 
     def write(self, path: str | Path) -> None:
         p = Path(path)

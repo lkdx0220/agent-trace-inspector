@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -21,7 +20,6 @@ from app.services.eval_store import (
     get_case_audit,
     get_run,
     get_test_case,
-    list_case_audits,
     save_case_audit,
 )
 from app.services.evaluator import _deepseek_key
@@ -120,7 +118,7 @@ def _llm_audit(question: str, answer: str, reference: str) -> Optional[Dict[str,
 【实际答案】
 {answer[:3000]}
 """
-    base = {
+    base: Dict[str, Any] = {
         "model": AUDIT_MODEL,
         "messages": [
             {"role": "system", "content": "你是轻量答案一致性审计器，只输出 JSON。"},

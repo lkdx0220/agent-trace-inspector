@@ -2,7 +2,7 @@
 """Shared scorers：judge / RAGAS / 关键词 / 引用 / 确定性检查。"""
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from evaluator.scorers import citations, deterministic, judge, keywords, ragas  # noqa: F401
 
@@ -61,8 +61,8 @@ def score_case(
             "skipped": "manual",
         }
         matched_variant = None
-        variant_results = []
-        keyword_reasons = []
+        variant_results: List[Dict[str, Any]] = []
+        keyword_reasons: List[str] = []
     else:
         keyword_result = keywords.check_case_keywords(case, answer, hit_rate_threshold=hit_rate_threshold)
         must_contain_result = keyword_result["must_contain_result"]

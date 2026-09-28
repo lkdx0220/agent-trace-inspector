@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Dict, List
 
 
 def generate_html(results: List[Dict], output_path: str, judge_model: str = "deepseek-chat"):
@@ -51,7 +51,7 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
                 elif score >= 2: c = "#c9a96e"
                 else: c = "#e06060"
                 return f'<span class="bar" style="width:{esc("{:.4f}".format(pct))}%;background:{c}"></span><span class="score">{esc(score)}</span>'
-            return f'<span class="score">?</span>'
+            return '<span class="score">?</span>'
 
         ragas_html = (
             f'F:{color_bar(f_s)} A:{color_bar(ar_s)} '
