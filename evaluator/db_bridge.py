@@ -10,7 +10,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # evaluator/db_bridge.py -> evaluator -> agent-trace-inspector
 _INSPECTOR_DIR = str(Path(__file__).resolve().parents[1])
@@ -46,16 +46,9 @@ def _bool_or_none(value: Any) -> Optional[bool]:
     return bool(value)
 
 
-def build_case_result(
+def _case_keyword_state(
     row: Dict[str, Any],
-    case: Optional[Dict[str, Any]],
-    project_path: str = "",
-) -> RunCaseResult:
-    case = case or {}
-    answer = str(row.get("answer") or "")
-    agent_status = str(row.get("agent_status") or "ok")
-    trace = ((row.get("raw") or {}).get("trace")) or None
-
+) -> Tuple[Dict[str, Any], Dict[str, Any], bool, List[str]]:
     must_contain_result = row.get("must_contain_result") or {}
     must_not_contain_result = row.get("must_not_contain_result") or {}
     keyword_pass = row.get("keyword_passed")
@@ -67,22 +60,41 @@ def build_case_result(
     if not reasons and not keyword_pass:
         reasons.extend(f"缺少必须包含：{kw}" for kw in (must_contain_result.get("miss") or []))
         reasons.extend(f"出现禁止包含：{kw}" for kw in (must_not_contain_result.get("violations") or []))
+    return must_contain_result, must_not_contain_result, keyword_pass, reasons
 
+
+def _build_check_results(
+    row: Dict[str, Any],
+    case: Dict[str, Any],
+    trace: Optional[Dict[str, Any]],
+    project_path: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     tools_check: Dict[str, Any] = {"passed": None, "missing": [], "actual": [], "expected": []}
     route_check: Dict[str, Any] = {"passed": None, "expected": None, "actual": None}
     prompt_check: Dict[str, Any] = {"passed": None, "violations": [], "evidence": "无 Trace"}
-    if trace:
-        tools_check = deterministic.check_expected_tools(trace, case.get("expected_tools") or [])
-        route_check = deterministic.check_expected_route(trace, case.get("expected_route"))
-        plan_prompt = ""
-        if project_path:
-            try:
-                from app.services.system_prompts import get_plan_system_prompt
-                plan_prompt = get_plan_system_prompt(project_path)
-            except Exception:
-                plan_prompt = ""
-        prompt_check = deterministic.check_prompt_compliance(trace, plan_prompt)
+    if not trace:
+        return tools_check, route_check, prompt_check
+    tools_check = deterministic.check_expected_tools(trace, case.get("expected_tools") or [])
+    route_check = deterministic.check_expected_route(trace, case.get("expected_route"))
+    plan_prompt = ""
+    if project_path:
+        try:
+            from app.services.system_prompts import get_plan_system_prompt
+            plan_prompt = get_plan_system_prompt(project_path)
+        except Exception:
+            plan_prompt = ""
+    prompt_check = deterministic.check_prompt_compliance(trace, plan_prompt)
+    return tools_check, route_check, prompt_check
 
+
+def _append_check_reasons(
+    reasons: List[str],
+    tools_check: Dict[str, Any],
+    route_check: Dict[str, Any],
+    prompt_check: Dict[str, Any],
+    row: Dict[str, Any],
+    agent_status: str,
+) -> None:
     if tools_check.get("passed") is False:
         reasons.append("缺少预期工具：" + "、".join(tools_check.get("missing") or []))
     if route_check.get("passed") is False:
@@ -92,14 +104,14 @@ def build_case_result(
     if agent_status != "ok":
         reasons.append(f"Agent 状态异常：{agent_status} {row.get('agent_error') or ''}".strip())
 
-    passed = (
-        keyword_pass
-        and tools_check.get("passed") is not False
-        and route_check.get("passed") is not False
-        and prompt_check.get("passed") is not False
-        and agent_status == "ok"
-    )
 
+def _build_case_metrics(
+    row: Dict[str, Any],
+    trace: Optional[Dict[str, Any]],
+    prompt_check: Dict[str, Any],
+    tools_check: Dict[str, Any],
+    route_check: Dict[str, Any],
+) -> Dict[str, Any]:
     metrics: Dict[str, Any] = {}
     if trace:
         metrics.update(deterministic.collect_metrics_from_trace(trace))
@@ -121,6 +133,31 @@ def build_case_result(
         "tool_check": tools_check,
         "route_check": route_check,
     })
+    return metrics
+
+
+def build_case_result(
+    row: Dict[str, Any],
+    case: Optional[Dict[str, Any]],
+    project_path: str = "",
+) -> RunCaseResult:
+    case = case or {}
+    answer = str(row.get("answer") or "")
+    agent_status = str(row.get("agent_status") or "ok")
+    trace = ((row.get("raw") or {}).get("trace")) or None
+
+    must_contain_result, must_not_contain_result, keyword_pass, reasons = _case_keyword_state(row)
+    tools_check, route_check, prompt_check = _build_check_results(row, case, trace, project_path)
+    _append_check_reasons(reasons, tools_check, route_check, prompt_check, row, agent_status)
+
+    passed = (
+        keyword_pass
+        and tools_check.get("passed") is not False
+        and route_check.get("passed") is not False
+        and prompt_check.get("passed") is not False
+        and agent_status == "ok"
+    )
+    metrics = _build_case_metrics(row, trace, prompt_check, tools_check, route_check)
 
     return RunCaseResult(
         case_id=str(row.get("id") or case.get("id") or ""),
@@ -138,7 +175,6 @@ def build_case_result(
         metrics=metrics,
         reasons=reasons,
     )
-
 
 def build_run_record(
     run_dir: str | Path,

@@ -11,7 +11,6 @@
     "app/services/project_doctor.py::_final_grounding_check",
     "app/services/report_generator.py::generate_analysis_report",
     "evaluator/adapters/genshin.py::run_agent",
-    "evaluator/db_bridge.py::build_case_result",
     "evaluator/harness.py::run_case",
     "evaluator/lint.py::_lint_keyword_item",
     "evaluator/lint.py::_lint_question_meta",

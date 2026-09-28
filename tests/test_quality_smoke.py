@@ -213,3 +213,21 @@ def test_report_escape_helpers():
     assert "dot-fail" in _dot(False)
     assert "#5cb878" in _color_bar(5)
     assert "?" in _color_bar(None)
+
+
+def test_build_case_keyword_state():
+    from evaluator.db_bridge import _case_keyword_state
+    _, _, keyword_pass, reasons = _case_keyword_state({
+        "must_contain_result": {"passed": False, "miss": ["童话"]},
+        "must_not_contain_result": {"passed": True, "violations": []},
+    })
+    assert keyword_pass is False
+    assert any("缺少必须包含：童话" in r for r in reasons)
+
+
+def test_build_check_results_no_trace_defaults():
+    from evaluator.db_bridge import _build_check_results
+    tools_check, route_check, prompt_check = _build_check_results({}, {}, None, "")
+    assert tools_check["passed"] is None
+    assert route_check["passed"] is None
+    assert prompt_check["evidence"] == "无 Trace"
