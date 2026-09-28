@@ -54,3 +54,25 @@ def test_path_guard_allow_and_deny():
     )
     assert not is_allowed_project_path("C:/Windows")
     assert not is_allowed_project_path("")
+
+
+def test_diagnostic_pipeline_stage_registry():
+    from app.services.diagnostic_pipeline import _STAGE_HANDLERS
+    assert set(_STAGE_HANDLERS) == {
+        "stage_input",
+        "stage_routing",
+        "stage_planning",
+        "stage_tool_execution",
+        "stage_knowledge_truth",
+        "stage_answer",
+        "stage_version",
+        "stage_evaluator",
+    }
+
+
+def test_diagnostic_pipeline_unknown_stage_is_evidence_error():
+    from app.services.diagnostic_pipeline import _run_stage
+    out = _run_stage({"id": "LO-X", "category": "no_such_stage"}, {})
+    assert out["ok"] is True
+    assert out["status"] == "completed"
+    assert "error" in out["data"]

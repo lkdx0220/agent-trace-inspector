@@ -3,7 +3,7 @@
   "note": "现有 D/E/F 复杂度债务基线。质量门允许这些函数继续以 warning 暴露，但新增 D/E/F 函数会 fail。",
   "functions": [
     "app/services/diagnoser.py::diagnose_run_case",
-    "app/services/diagnostic_pipeline.py::_run_stage",
+    "app/services/diagnostic_pipeline.py::_stage_knowledge_truth",
     "app/services/diagnostic_pipeline.py::build_fact_sheet",
     "app/services/diagnostic_pipeline.py::resolve_cause",
     "app/services/doctor_tools.py::_trace_truth_audit",

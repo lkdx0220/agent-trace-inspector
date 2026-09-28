@@ -110,287 +110,326 @@ def _tool_calls_signal(trace: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return calls
 
 
-def _run_stage(order: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
-    oid = order["id"]
-    category = order["category"]
+def _stage_input(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    result = ctx.get("result") or {}
+    case = ctx.get("case") or {}
+    answer = str(result.get("answer") or "")
+    data = {
+        "question": str(result.get("question") or case.get("question") or ""),
+        "case_category": case.get("category"),
+        "difficulty": case.get("difficulty"),
+        "answer": answer[:1000],
+        "answer_chars": len(answer),
+        "must_contain": case.get("must_contain") or [],
+        "must_not_contain": case.get("must_not_contain") or [],
+        "match_mode": case.get("match_mode"),
+        "alternatives": case.get("alternatives") or [],
+        "reasons": result.get("reasons") or [],
+        "passed": result.get("passed"),
+        "trace_id": result.get("trace_id"),
+    }
+    return f"题目与评测标准已重放；答案长度 {len(answer)}", data
+
+
+def _stage_routing(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    trace = ctx.get("trace")
+    result = ctx.get("result") or {}
+    case = ctx.get("case") or {}
+    question = str(result.get("question") or case.get("question") or "")
+    project_path = str(ctx.get("project_path") or DEFAULT_PROJECT_PATH)
+    route_events = _route_events(trace)
+    route = (route_events[-1].get("data") or {}) if route_events else {}
+    intent_labels = [str(x) for x in (route.get("intent_labels") or [])]
+    injected = [str(x) for x in (route.get("injected_tools") or [])]
+    probe = routing_probe(project_path, question)
+    pdata = probe.get("data") or {}
+    hard_rule_hit = bool(pdata.get("hard_rule_hit"))
+    required = [str(x) for x in (pdata.get("required_tools") or [])]
+    missing_required = [t for t in required if t not in injected]
+    data = {
+        "route_event_seen": bool(route_events),
+        "route_event_count": len(route_events),
+        "intent_labels": intent_labels,
+        "injected_tools": injected,
+        "current_code_hard_rule_hit": hard_rule_hit,
+        "current_code_required_tools": required,
+        "missing_required_tools": missing_required,
+        "routing_probe": probe,
+        "version_note": "required_tools 来自当前 intent_router.py；是否适用于 Trace 时刻由 LO-STG-07 判定",
+    }
+    summary = (
+        f"route 事件 {len(route_events)} 个；intent={intent_labels or '无'}；"
+        f"injected {len(injected)} 个工具；当前代码硬规则命中={hard_rule_hit}；"
+        f"缺失必要工具={missing_required or '无'}"
+    )
+    return summary, data
+
+
+def _stage_planning(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    trace = ctx.get("trace")
+    project_path = str(ctx.get("project_path") or DEFAULT_PROJECT_PATH)
+    signal = _plan_signal(trace)
+    plan_texts = signal.get("execution_plans") or []
+    plan_intents = _extract_plan_tool_intents(plan_texts)
+    plan_prompt_head = ""
+    answer_prompt_head = ""
+    try:
+        plan_prompt_head = (get_plan_system_prompt(project_path) or "")[:2200]
+    except Exception:
+        pass
+    try:
+        answer_prompt_head = (get_answer_system_prompt(project_path) or "")[:2200]
+    except Exception:
+        pass
+    data = {
+        "plan_events": signal.get("plan_events"),
+        "plan_retry_events": signal.get("plan_retry_events"),
+        "execution_plans": plan_texts,
+        "tool_call_names": signal.get("tool_call_names"),
+        "tool_skip_reason": signal.get("tool_skip_reason"),
+        "plan_intents": plan_intents,
+        "plan_intent_mismatch_hint": bool(plan_intents) and not signal.get("tool_call_names"),
+        "plan_prompt_head": plan_prompt_head,
+        "answer_prompt_head": answer_prompt_head,
+        "version_note": "plan/answer 提示词为当前工作区版本；是否等于 Trace 时刻版本由 LO-STG-07 判定",
+    }
+    summary = (
+        f"plan 事件 {signal.get('plan_events')} 次，plan_retry {signal.get('plan_retry_events')} 次；"
+        f"文本工具意图={plan_intents or '无'}；结构化 tool_call_names={signal.get('tool_call_names') or '无'}；"
+        f"skip_reason={signal.get('tool_skip_reason') or '无'}"
+    )
+    return summary, data
+
+
+def _stage_tool_execution(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    trace = ctx.get("trace")
+    calls = _tool_calls_signal(trace)
+    not_found = [c for c in calls if c.get("status") == "not_found"]
+    errors = [c for c in calls if c.get("status") in {"error", "failed"}]
+    names = [str(c.get("name")) for c in calls if c.get("name")]
+    data = {
+        "tool_count": len(calls),
+        "tool_calls": calls,
+        "tool_names": names,
+        "not_found_tools": not_found,
+        "error_tools": errors,
+        "zero_tool_no_skip": len(calls) == 0,
+    }
+    summary = (
+        f"实际工具 span {len(calls)} 个；" +
+        ("；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用") +
+        f"；not_found {len(not_found)} 个，error {len(errors)} 个"
+    )
+    return summary, data
+
+
+def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     trace = ctx.get("trace")
     result = ctx.get("result") or {}
     case = ctx.get("case") or {}
     answer = str(result.get("answer") or "")
     question = str(result.get("question") or case.get("question") or "")
     project_path = str(ctx.get("project_path") or DEFAULT_PROJECT_PATH)
+    missing = [str(k) for k in (case.get("must_contain") or []) if str(k).strip()]
+    forbidden = [str(k) for k in (case.get("must_not_contain") or []) if str(k).strip()]
+    not_found_tools = [c for c in _tool_calls_signal(trace) if c.get("status") == "not_found"]
 
+    # 批量检索：每个缺失词构造一条“题目 + 关键词”查询，一条子进程完成。
+    queries: List[str] = []
+    for kw in missing:
+        q = f"{question} {kw}".strip()
+        if q not in queries:
+            queries.append(q)
+    nf_terms: List[str] = []
+    for c in not_found_tools:
+        args = c.get("args") or {}
+        for v in args.values():
+            if isinstance(v, str) and v.strip():
+                nf_terms.append(v.strip())
+                if v.strip() not in queries:
+                    queries.append(v.strip())
+                break
+
+    raw_keywords = missing + forbidden + nf_terms
+    kb_probe = knowledge_probe_batch(project_path, queries, top_k=5) if queries else {"ok": True, "data": {"queries": {}}}
+    raw_probe = raw_kb_contains_multi(project_path, raw_keywords) if raw_keywords else {"ok": True, "data": {}}
+    char_terms: List[str] = []
+    for c in not_found_tools:
+        if c.get("name") != "query_character":
+            continue
+        args = c.get("args")
+        if not isinstance(args, dict) or not args:
+            continue
+        first = next(iter(args.values()), "")
+        if isinstance(first, str):
+            char_terms.append(first)
+    alias_probe = (
+        inspect_aliases_multi(project_path, char_terms)
+        if char_terms
+        else {"ok": True, "data": {}}
+    )
+
+    kb_data = kb_probe.get("data")
+    kb_queries = kb_data.get("queries") if isinstance(kb_data, dict) else {}
+    kb_queries = kb_queries or {}
+    raw_probe_data = raw_probe.get("data")
+    raw_data = raw_probe_data if isinstance(raw_probe_data, dict) else {}
+    alias_probe_data = alias_probe.get("data")
+    alias_data = alias_probe_data if isinstance(alias_probe_data, dict) else {}
+
+    # 当前提示词/规则视角：用于禁词来源判断，版本适用性由 STG-07 单独说明。
+    plan_prompt_text = ""
+    answer_prompt_text = ""
     try:
-        if category == "stage_input":
-            data = {
-                "question": question,
-                "case_category": case.get("category"),
-                "difficulty": case.get("difficulty"),
-                "answer": answer[:1000],
-                "answer_chars": len(answer),
-                "must_contain": case.get("must_contain") or [],
-                "must_not_contain": case.get("must_not_contain") or [],
-                "match_mode": case.get("match_mode"),
-                "alternatives": case.get("alternatives") or [],
-                "reasons": result.get("reasons") or [],
-                "passed": result.get("passed"),
-                "trace_id": result.get("trace_id"),
-            }
-            return _evidence(oid, category, f"题目与评测标准已重放；答案长度 {len(answer)}", data)
+        plan_prompt_text = get_plan_system_prompt(project_path)
+        answer_prompt_text = get_answer_system_prompt(project_path)
+    except Exception:
+        pass
 
-        if category == "stage_routing":
-            route_events = _route_events(trace)
-            route = (route_events[-1].get("data") or {}) if route_events else {}
-            intent_labels = [str(x) for x in (route.get("intent_labels") or [])]
-            injected = [str(x) for x in (route.get("injected_tools") or [])]
-            probe = routing_probe(project_path, question)
-            pdata = probe.get("data") or {}
-            hard_rule_hit = bool(pdata.get("hard_rule_hit"))
-            required = [str(x) for x in (pdata.get("required_tools") or [])]
-            missing_required = [t for t in required if t not in injected]
-            data = {
-                "route_event_seen": bool(route_events),
-                "route_event_count": len(route_events),
-                "intent_labels": intent_labels,
-                "injected_tools": injected,
-                "current_code_hard_rule_hit": hard_rule_hit,
-                "current_code_required_tools": required,
-                "missing_required_tools": missing_required,
-                "routing_probe": probe,
-                "version_note": "required_tools 来自当前 intent_router.py；是否适用于 Trace 时刻由 LO-STG-07 判定",
-            }
-            summary = (
-                f"route 事件 {len(route_events)} 个；intent={intent_labels or '无'}；"
-                f"injected {len(injected)} 个工具；当前代码硬规则命中={hard_rule_hit}；"
-                f"缺失必要工具={missing_required or '无'}"
-            )
-            return _evidence(oid, category, summary, data)
+    keyword_results: Dict[str, Any] = {}
+    for kw in missing:
+        where = _find_where(kw, trace, answer)
+        q = f"{question} {kw}".strip()
+        raw_out = kb_queries.get(q)
+        probe_like = {"ok": kb_probe.get("ok"), "data": {"queries": {q: raw_out}}}
+        kb_hit = kb_probe_contains(probe_like, kw)
+        raw_entry = raw_data.get(kw) or {}
+        keyword_results[kw] = {
+            "where": where,
+            "kb_hit": kb_hit,
+            "raw_contains": bool(raw_entry.get("contains")),
+            "raw_hits": raw_entry.get("hits") or [],
+            "kb_query": q,
+            "kb_output_is_error": isinstance(raw_out, str) and raw_out.startswith("ERROR"),
+        }
 
-        if category == "stage_planning":
-            signal = _plan_signal(trace)
-            plan_texts = signal.get("execution_plans") or []
-            plan_intents = _extract_plan_tool_intents(plan_texts)
-            plan_prompt_head = ""
-            answer_prompt_head = ""
-            try:
-                plan_prompt_head = (get_plan_system_prompt(project_path) or "")[:2200]
-            except Exception:
-                pass
-            try:
-                answer_prompt_head = (get_answer_system_prompt(project_path) or "")[:2200]
-            except Exception:
-                pass
-            data = {
-                "plan_events": signal.get("plan_events"),
-                "plan_retry_events": signal.get("plan_retry_events"),
-                "execution_plans": plan_texts,
-                "tool_call_names": signal.get("tool_call_names"),
-                "tool_skip_reason": signal.get("tool_skip_reason"),
-                "plan_intents": plan_intents,
-                "plan_intent_mismatch_hint": bool(plan_intents) and not signal.get("tool_call_names"),
-                "plan_prompt_head": plan_prompt_head,
-                "answer_prompt_head": answer_prompt_head,
-                "version_note": "plan/answer 提示词为当前工作区版本；是否等于 Trace 时刻版本由 LO-STG-07 判定",
-            }
-            summary = (
-                f"plan 事件 {signal.get('plan_events')} 次，plan_retry {signal.get('plan_retry_events')} 次；"
-                f"文本工具意图={plan_intents or '无'}；结构化 tool_call_names={signal.get('tool_call_names') or '无'}；"
-                f"skip_reason={signal.get('tool_skip_reason') or '无'}"
-            )
-            return _evidence(oid, category, summary, data)
+    forbidden_results: Dict[str, Any] = {}
+    for kw in forbidden:
+        where = _find_where(kw, trace, answer)
+        raw_entry = raw_data.get(kw) or {}
+        forbidden_results[kw] = {
+            "where": where,
+            "raw_contains": bool(raw_entry.get("contains")),
+            "raw_hits": raw_entry.get("hits") or [],
+            "prompt_current_contains": (kw in plan_prompt_text) or (kw in answer_prompt_text),
+        }
 
-        if category == "stage_tool_execution":
-            calls = _tool_calls_signal(trace)
-            not_found = [c for c in calls if c.get("status") == "not_found"]
-            errors = [c for c in calls if c.get("status") in {"error", "failed"}]
-            names = [str(c.get("name")) for c in calls if c.get("name")]
-            data = {
-                "tool_count": len(calls),
-                "tool_calls": calls,
-                "tool_names": names,
-                "not_found_tools": not_found,
-                "error_tools": errors,
-                "zero_tool_no_skip": len(calls) == 0,
-            }
-            summary = (
-                f"实际工具 span {len(calls)} 个；" +
-                ("；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用") +
-                f"；not_found {len(not_found)} 个，error {len(errors)} 个"
-            )
-            return _evidence(oid, category, summary, data)
+    nf_results: List[Dict[str, Any]] = []
+    for c in not_found_tools:
+        args = c.get("args") or {}
+        term = ""
+        for v in args.values():
+            if isinstance(v, str) and v:
+                term = str(v)
+                break
+        raw_entry = raw_data.get(term) or {}
+        alias_entry = alias_data.get(term) or {}
+        nf_results.append({
+            "tool_name": c.get("name"),
+            "term": term,
+            "raw_contains": bool(raw_entry.get("contains")),
+            "raw_hits": raw_entry.get("hits") or [],
+            "alias_canonical": alias_entry.get("canonical"),
+            "alias_variants": alias_entry.get("variants") or [],
+        })
 
-        if category == "stage_knowledge_truth":
-            missing = [str(k) for k in (case.get("must_contain") or []) if str(k).strip()]
-            forbidden = [str(k) for k in (case.get("must_not_contain") or []) if str(k).strip()]
-            not_found_tools = [c for c in _tool_calls_signal(trace) if c.get("status") == "not_found"]
+    data = {
+        "keyword_results": keyword_results,
+        "forbidden_results": forbidden_results,
+        "not_found_results": nf_results,
+        "kb_probe": kb_probe,
+        "raw_probe": raw_probe,
+        "alias_probe": alias_probe,
+    }
+    missing_summary = "；".join(
+        f"{kw}(tool={r['where'].get('tool_results')},answer={r['where'].get('final_answer')},kb={r.get('kb_hit')},raw={r.get('raw_contains')})"
+        for kw, r in keyword_results.items()
+    ) or "无缺失词"
+    forbidden_summary = "；".join(
+        f"{kw}(answer={r['where'].get('final_answer')},tool={r['where'].get('tool_results')},prompt={r.get('prompt_current_contains')})"
+        for kw, r in forbidden_results.items()
+    ) or "无禁词"
+    return f"知识库真值核对完成。缺失词: {missing_summary}。禁词: {forbidden_summary}", data
 
-            # 批量检索：每个缺失词构造一条“题目 + 关键词”查询，一条子进程完成。
-            queries: List[str] = []
-            for kw in missing:
-                q = f"{question} {kw}".strip()
-                if q not in queries:
-                    queries.append(q)
-            nf_terms: List[str] = []
-            for c in not_found_tools:
-                args = c.get("args") or {}
-                for v in args.values():
-                    if isinstance(v, str) and v.strip():
-                        nf_terms.append(v.strip())
-                        if v.strip() not in queries:
-                            queries.append(v.strip())
-                        break
 
-            raw_keywords = missing + forbidden + nf_terms
-            kb_probe = knowledge_probe_batch(project_path, queries, top_k=5) if queries else {"ok": True, "data": {"queries": {}}}
-            raw_probe = raw_kb_contains_multi(project_path, raw_keywords) if raw_keywords else {"ok": True, "data": {}}
-            char_terms: List[str] = []
-            for c in not_found_tools:
-                if c.get("name") != "query_character":
-                    continue
-                args = c.get("args")
-                if not isinstance(args, dict) or not args:
-                    continue
-                first = next(iter(args.values()), "")
-                if isinstance(first, str):
-                    char_terms.append(first)
-            alias_probe = (
-                inspect_aliases_multi(project_path, char_terms)
-                if char_terms
-                else {"ok": True, "data": {}}
-            )
+def _stage_answer(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    trace = ctx.get("trace")
+    result = ctx.get("result") or {}
+    answer = str(result.get("answer") or "")
+    corpus = _tool_text(collect_tool_spans(trace))
+    if corpus and answer:
+        def grams(s: str) -> set:
+            return set(s[i:i + 4] for i in range(max(0, len(s) - 3)))
+        overlap = grams(answer) & grams(corpus)
+        ratio = len(overlap) / max(1, len(grams(answer)))
+    else:
+        ratio = 0.0
+    answer_ev = next((e for e in _events(trace) if e.get("event") == "answer_end"), None)
+    short = _short_circuit_answer(answer)
+    data = {
+        "answer_chars": len(answer),
+        "tool_corpus_chars": len(corpus),
+        "4gram_overlap_ratio": round(float(ratio), 4),
+        "short_circuit_pattern": short,
+        "answer_end_event": {k: (str(v)[:200]) for k, v in ((answer_ev or {}).get("data") or {}).items()},
+    }
+    summary = f"答案 {len(answer)} 字，与工具返回 4-gram 重合率={ratio:.2%}，短路串={short or '无'}"
+    return summary, data
 
-            kb_data = kb_probe.get("data")
-            kb_queries = kb_data.get("queries") if isinstance(kb_data, dict) else {}
-            kb_queries = kb_queries or {}
-            raw_probe_data = raw_probe.get("data")
-            raw_data = raw_probe_data if isinstance(raw_probe_data, dict) else {}
-            alias_probe_data = alias_probe.get("data")
-            alias_data = alias_probe_data if isinstance(alias_probe_data, dict) else {}
 
-            # 当前提示词/规则视角：用于禁词来源判断，版本适用性由 STG-07 单独说明。
-            plan_prompt_text = ""
-            answer_prompt_text = ""
-            try:
-                plan_prompt_text = get_plan_system_prompt(project_path)
-                answer_prompt_text = get_answer_system_prompt(project_path)
-            except Exception:
-                pass
+def _stage_version(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    trace = ctx.get("trace")
+    project_path = str(ctx.get("project_path") or DEFAULT_PROJECT_PATH)
+    status = trace_snapshot_status(trace, project_path)
+    data = status
+    known = status.get("trace_snapshot_known")
+    changed = status.get("changed_files") or []
+    summary = (
+        f"Trace 源码快照 known={known}；"
+        f"prompt_clean={status.get('prompt_clean')}；code_clean={status.get('code_clean')}；"
+        f"不一致文件 {len(changed)} 个：{changed[:8]}"
+    )
+    return summary, data
 
-            keyword_results: Dict[str, Any] = {}
-            for kw in missing:
-                where = _find_where(kw, trace, answer)
-                q = f"{question} {kw}".strip()
-                raw_out = kb_queries.get(q)
-                probe_like = {"ok": kb_probe.get("ok"), "data": {"queries": {q: raw_out}}}
-                kb_hit = kb_probe_contains(probe_like, kw)
-                raw_entry = raw_data.get(kw) or {}
-                keyword_results[kw] = {
-                    "where": where,
-                    "kb_hit": kb_hit,
-                    "raw_contains": bool(raw_entry.get("contains")),
-                    "raw_hits": raw_entry.get("hits") or [],
-                    "kb_query": q,
-                    "kb_output_is_error": isinstance(raw_out, str) and raw_out.startswith("ERROR"),
-                }
 
-            forbidden_results: Dict[str, Any] = {}
-            for kw in forbidden:
-                where = _find_where(kw, trace, answer)
-                raw_entry = raw_data.get(kw) or {}
-                forbidden_results[kw] = {
-                    "where": where,
-                    "raw_contains": bool(raw_entry.get("contains")),
-                    "raw_hits": raw_entry.get("hits") or [],
-                    "prompt_current_contains": (kw in plan_prompt_text) or (kw in answer_prompt_text),
-                }
+def _stage_evaluator(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    result = ctx.get("result") or {}
+    audit = _trace_truth_audit(ctx)
+    data = {
+        "audit": audit,
+        "reasons": result.get("reasons") or [],
+        "passed": result.get("passed"),
+        "keyword_pass": result.get("keyword_pass"),
+        "tool_pass": result.get("tool_pass"),
+        "route_pass": result.get("route_pass"),
+        "prompt_pass": result.get("prompt_pass"),
+        "prompt_violations": result.get("prompt_violations") or [],
+        "actual_tools": result.get("actual_tools") or [],
+    }
+    return audit.get("summary") or "评测器一致性审计完成", data
 
-            nf_results: List[Dict[str, Any]] = []
-            for c in not_found_tools:
-                args = c.get("args") or {}
-                term = ""
-                for v in args.values():
-                    if isinstance(v, str) and v:
-                        term = str(v)
-                        break
-                raw_entry = raw_data.get(term) or {}
-                alias_entry = alias_data.get(term) or {}
-                nf_results.append({
-                    "tool_name": c.get("name"),
-                    "term": term,
-                    "raw_contains": bool(raw_entry.get("contains")),
-                    "raw_hits": raw_entry.get("hits") or [],
-                    "alias_canonical": alias_entry.get("canonical"),
-                    "alias_variants": alias_entry.get("variants") or [],
-                })
 
-            data = {
-                "keyword_results": keyword_results,
-                "forbidden_results": forbidden_results,
-                "not_found_results": nf_results,
-                "kb_probe": kb_probe,
-                "raw_probe": raw_probe,
-                "alias_probe": alias_probe,
-            }
-            missing_summary = "；".join(
-                f"{kw}(tool={r['where'].get('tool_results')},answer={r['where'].get('final_answer')},kb={r.get('kb_hit')},raw={r.get('raw_contains')})"
-                for kw, r in keyword_results.items()
-            ) or "无缺失词"
-            forbidden_summary = "；".join(
-                f"{kw}(answer={r['where'].get('final_answer')},tool={r['where'].get('tool_results')},prompt={r.get('prompt_current_contains')})"
-                for kw, r in forbidden_results.items()
-            ) or "无禁词"
-            return _evidence(oid, category, f"知识库真值核对完成。缺失词: {missing_summary}。禁词: {forbidden_summary}", data)
+_STAGE_HANDLERS = {
+    "stage_input": _stage_input,
+    "stage_routing": _stage_routing,
+    "stage_planning": _stage_planning,
+    "stage_tool_execution": _stage_tool_execution,
+    "stage_knowledge_truth": _stage_knowledge_truth,
+    "stage_answer": _stage_answer,
+    "stage_version": _stage_version,
+    "stage_evaluator": _stage_evaluator,
+}
 
-        if category == "stage_answer":
-            corpus = _tool_text(collect_tool_spans(trace))
-            if corpus and answer:
-                def grams(s: str) -> set:
-                    return set(s[i:i + 4] for i in range(max(0, len(s) - 3)))
-                overlap = grams(answer) & grams(corpus)
-                ratio = len(overlap) / max(1, len(grams(answer)))
-            else:
-                ratio = 0.0
-            answer_ev = next((e for e in _events(trace) if e.get("event") == "answer_end"), None)
-            short = _short_circuit_answer(answer)
-            data = {
-                "answer_chars": len(answer),
-                "tool_corpus_chars": len(corpus),
-                "4gram_overlap_ratio": round(float(ratio), 4),
-                "short_circuit_pattern": short,
-                "answer_end_event": {k: (str(v)[:200]) for k, v in ((answer_ev or {}).get("data") or {}).items()},
-            }
-            summary = f"答案 {len(answer)} 字，与工具返回 4-gram 重合率={ratio:.2%}，短路串={short or '无'}"
-            return _evidence(oid, category, summary, data)
 
-        if category == "stage_version":
-            status = trace_snapshot_status(trace, project_path)
-            data = status
-            known = status.get("trace_snapshot_known")
-            changed = status.get("changed_files") or []
-            summary = (
-                f"Trace 源码快照 known={known}；"
-                f"prompt_clean={status.get('prompt_clean')}；code_clean={status.get('code_clean')}；"
-                f"不一致文件 {len(changed)} 个：{changed[:8]}"
-            )
-            return _evidence(oid, category, summary, data)
-
-        if category == "stage_evaluator":
-            audit = _trace_truth_audit(ctx)
-            data = {
-                "audit": audit,
-                "reasons": result.get("reasons") or [],
-                "passed": result.get("passed"),
-                "keyword_pass": result.get("keyword_pass"),
-                "tool_pass": result.get("tool_pass"),
-                "route_pass": result.get("route_pass"),
-                "prompt_pass": result.get("prompt_pass"),
-                "prompt_violations": result.get("prompt_violations") or [],
-                "actual_tools": result.get("actual_tools") or [],
-            }
-            return _evidence(oid, category, audit.get("summary") or "评测器一致性审计完成", data)
-
+def _run_stage(order: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    oid = order["id"]
+    category = order["category"]
+    handler = _STAGE_HANDLERS.get(category)
+    if handler is None:
         return _evidence(oid, category, f"未知阶段 {category}", {"error": f"未知阶段 {category}"})
-
+    try:
+        summary, data = handler(ctx)
+        return _evidence(oid, category, summary, data)
     except Exception as e:
         return {
             "ok": True,
