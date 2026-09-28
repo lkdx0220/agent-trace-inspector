@@ -245,6 +245,10 @@ def check_vulture() -> Dict[str, Any]:
     }
 
 
+COVERAGE_WARN = 25.0
+COVERAGE_FAIL = 20.0
+
+
 # ---------------------------------------------------------------
 # 5) pytest + coverage
 # ---------------------------------------------------------------
@@ -265,6 +269,10 @@ def check_pytest() -> Dict[str, Any]:
     r = _run(cmd)
     text = (r["stdout"] or "") + "\n" + (r["stderr"] or "")
     percent: Optional[float] = None
+    try:
+        (REPORTS_DIR / "pytest_full.txt").write_text(text, encoding="utf-8")
+    except Exception:
+        pass
     if cov_json.exists():
         try:
             cov = json.loads(cov_json.read_text(encoding="utf-8"))
@@ -272,8 +280,18 @@ def check_pytest() -> Dict[str, Any]:
         except Exception:
             percent = None
     if r["returncode"] == 0:
-        status = "pass"
-        summary = f"测试通过，覆盖率={percent:.2f}%" if percent is not None else "测试通过"
+        if percent is None:
+            status = "warn"
+            summary = "测试通过，但无法读取覆盖率"
+        elif percent < COVERAGE_FAIL:
+            status = "fail"
+            summary = f"测试通过，但覆盖率 {percent:.2f}% < fail 线 {COVERAGE_FAIL}%"
+        elif percent < COVERAGE_WARN:
+            status = "warn"
+            summary = f"测试通过，覆盖率 {percent:.2f}%（低于 warn 线 {COVERAGE_WARN}%）"
+        else:
+            status = "pass"
+            summary = f"测试通过，覆盖率={percent:.2f}%"
     elif r["returncode"] == 5:
         status = "warn"
         summary = "没有收集到测试（pytest exit 5）；先用 warning 暴露"

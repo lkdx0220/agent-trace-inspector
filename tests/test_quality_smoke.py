@@ -307,3 +307,134 @@ def test_render_detail_card_error():
     from evaluator.report import _render_detail_card
     html = _render_detail_card({"id": "Q1", "category": "x", "error": "boom"})
     assert "boom" in html
+
+
+def test_deterministic_trace_checks():
+    from evaluator.scorers.deterministic import (
+        check_expected_route, check_expected_tools, check_prompt_compliance, collect_tools_from_trace,
+    )
+    trace = {
+        "metadata": {"execution_mode": "L2"},
+        "root_span": {"span_type": "agent", "children": [{"span_type": "tool", "name": "hybrid_search"}]},
+        "trace_events": [{"event": "plan", "data": {"execution_plan": "调用 hybrid_search"}}],
+    }
+    assert collect_tools_from_trace(trace) == ["hybrid_search"]
+    assert check_expected_tools(trace, ["hybrid_search"])["passed"] is True
+    assert check_expected_route(trace, "L2")["passed"] is True
+    assert check_prompt_compliance(trace, "规则原文")["passed"] is True
+    trace_zero = {
+        "metadata": {},
+        "root_span": {"span_type": "agent"},
+        "trace_events": [{"event": "plan", "data": {"execution_plan": "不调用工具"}}],
+    }
+    assert check_prompt_compliance(trace_zero, "规则原文")["passed"] is False
+
+
+def test_coverage_gate_validate_prescriptions():
+    from app.services.coverage_gate import validate_prescriptions
+    orders = [{"id": "LO-001"}]
+    evidence = {"LO-001": [{"ok": True, "summary": "ok"}]}
+    report = {
+        "diagnosis": {"primary_root_cause": "x"},
+        "prescriptions": [{"root_cause": "x", "evidence_ids": ["LO-001"]}],
+    }
+    assert validate_prescriptions(report, orders, evidence, [])["valid"] is True
+    bad = {
+        "diagnosis": {"primary_root_cause": "x"},
+        "prescriptions": [{"root_cause": "x", "evidence_ids": ["EXT-999"]}],
+    }
+    assert validate_prescriptions(bad, orders, evidence, [])["valid"] is False
+
+
+def test_compute_trace_metrics_synthetic():
+    from datetime import datetime
+    from app.services.metrics import compute_trace_metrics
+    t0 = datetime.now().isoformat()
+    t1 = datetime.now().isoformat()
+    trace = {
+        "trace_id": "t1",
+        "question": "q",
+        "duration_ms": 1000,
+        "root_span": {
+            "span_type": "agent",
+            "start_time": t0,
+            "end_time": t1,
+            "children": [{"span_type": "tool", "name": "hybrid_search", "status": "success", "start_time": t0, "end_time": t1}],
+        },
+        "trace_events": [],
+    }
+    metrics = compute_trace_metrics(trace)
+    assert metrics["tool_count"] == 1
+    assert metrics["unique_tools"] == ["hybrid_search"]
+    assert metrics["span_count"] == 2
+
+
+def test_generate_lab_orders_basic():
+    from app.services.lab_orders import generate_lab_orders
+    result = {"reasons": ["缺少必须包含：童话"], "answer": "x", "prompt_pass": None}
+    case = {"case_id": "R3", "must_contain": ["童话"]}
+    trace = {"root_span": {"span_type": "agent", "children": [{"span_type": "tool", "name": "hybrid_search", "status": "success"}]}}
+    orders = generate_lab_orders(result, case, trace, None)
+    ids = [o["id"] for o in orders]
+    assert "LO-001" in ids
+    assert "LO-KW-01" in ids
+    assert "LO-AI-01" in ids
+
+
+def test_lint_cases_temp_file():
+    import json
+    from pathlib import Path
+    from evaluator.lint import lint_cases
+    path = Path("quality/reports/test_lint_cases_temp.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "schema_version": "1.0",
+        "metadata": {"project": "genshin", "total_questions": 1},
+        "questions": [{
+            "id": "Q1", "question": "q", "category": "c", "difficulty": "easy",
+            "match_mode": "all", "must_contain": ["钟离"], "must_not_contain": [], "reference_answer": "钟离",
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    try:
+        report = lint_cases(str(path))
+        assert report["ok"] is True
+        assert report["keyword_stats"]["unclassified"] == 1
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_render_summary_row():
+    from evaluator.report import _render_summary_row
+    row = {
+        "id": "Q1", "category": "c", "question": "问题",
+        "ragas": {"faithfulness": 5, "answer_relevancy": 4, "context_precision": 3, "context_recall": 2},
+        "must_contain_result": {"passed": True, "hit_rate": 1.0, "miss": [], "semantic_hit": [], "hit": ["钟离"], "violations": []},
+        "must_not_contain_result": {"passed": True, "violations": []},
+        "citation_result": {"passed": True, "total": 0, "verified": 0, "unverified": []},
+        "elapsed": 1.0,
+    }
+    html = _render_summary_row(row)
+    assert "Q1" in html
+    assert "问题" in html
+
+
+def test_html_sanitizer_blocks_scripts():
+    from app.services.html_sanitizer import sanitize_html
+    raw = '<p onclick="x()">hi<script>alert(1)</script><a href="javascript:bad()">x</a><a href="https://example.com">ok</a></p>'
+    out = sanitize_html(raw)
+    assert "<script" not in out
+    assert "onclick" not in out
+    assert "javascript:" not in out
+    assert "https://example.com" in out
+
+
+def test_harness_median_helpers():
+    from evaluator.harness import _median, _median_ragas
+    assert _median([1, 3, 2]) == 2
+    assert _median([]) is None
+    med = _median_ragas([
+        {"ragas": {"faithfulness": 4, "answer_relevancy": 2}},
+        {"ragas": {"faithfulness": 2, "answer_relevancy": 4}},
+    ])
+    assert med["faithfulness"] == 3
+    assert med["answer_relevancy"] == 3
