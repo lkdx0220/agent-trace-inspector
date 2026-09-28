@@ -231,3 +231,14 @@ def test_build_check_results_no_trace_defaults():
     assert tools_check["passed"] is None
     assert route_check["passed"] is None
     assert prompt_check["evidence"] == "无 Trace"
+
+
+def test_run_evalset_summarize_rows():
+    from tools.run_evalset import _summarize_rows
+    rows = [
+        {"id": "Q1", "keyword_passed": True},
+        {"id": "Q2", "keyword_passed": False},
+    ]
+    passed, failures = _summarize_rows(rows)
+    assert passed == 1
+    assert failures == ["Q2"]

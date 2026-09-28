@@ -15,7 +15,7 @@ import random
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 INSPECTOR_DIR = Path(__file__).resolve().parents[1]
 if str(INSPECTOR_DIR) not in sys.path:
@@ -39,7 +39,7 @@ def _load_cases(path: str) -> List[Dict[str, Any]]:
     return list(data.get("questions") or [])
 
 
-def main(argv=None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run evalset with shared harness + scorers")
     parser.add_argument("--cases", default="", help="题集 JSON；默认 evalset/<adapter>/cases.json，不存在时 genshin 回退 <workspace>/golden_test_set.json")
     parser.add_argument("--adapter", default="genshin", choices=["genshin", "doctor"], help="被测 adapter：genshin 或 doctor")
@@ -61,7 +61,101 @@ def main(argv=None) -> int:
         default=0,
         help="覆盖每题的重复次数（0=按题集 agent_repeat：stable=1/occasional=2/noisy=3，多数通过）",
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def _resolve_cases_path(args: argparse.Namespace, workspace: str) -> Optional[str]:
+    if args.cases:
+        cases_path = args.cases
+    else:
+        local_cases = INSPECTOR_DIR / "evalset" / args.adapter / "cases.json"
+        if local_cases.exists():
+            cases_path = str(local_cases)
+        elif args.adapter == "genshin":
+            cases_path = str(Path(workspace) / "golden_test_set.json")
+        else:
+            cases_path = str(local_cases)
+    if not Path(cases_path).exists():
+        return None
+    return cases_path
+
+
+def _build_judge_settings(
+    config: Dict[str, Any],
+    args: argparse.Namespace,
+    workspace: str,
+    cache_path: Path,
+) -> Tuple[Any, str, int, float]:
+    default_timeout = 900 if args.adapter == "doctor" else 300
+    configured_timeout = evaluator_config.config_value(config, "harness.timeout_seconds", None)
+    timeout_seconds = args.timeout or max(int(configured_timeout or 0), default_timeout)
+    judge_model = args.judge_model or str(evaluator_config.config_value(config, "judge.model", "deepseek-chat"))
+    scorer_version = "evaluator-phase2-1.0"
+    hit_rate_threshold = float(
+        evaluator_config.config_value(config, "scoring.must_contain_default_hit_rate", 0.8) or 0.8
+    )
+    settings = judge.JudgeSettings(
+        model=judge_model,
+        temperature=float(evaluator_config.config_value(config, "judge.params.temperature", 0.0) or 0.0),
+        max_tokens=int(evaluator_config.config_value(config, "judge.params.max_tokens", 512) or 512),
+        thinking=str(evaluator_config.config_value(config, "judge.params.thinking", "disabled") or "disabled"),
+        contexts_chars=int(evaluator_config.config_value(config, "judge.window.contexts_chars", 60000) or 60000),
+        answer_chars=int(evaluator_config.config_value(config, "judge.window.answer_chars", 20000) or 20000),
+        reference_chars=int(evaluator_config.config_value(config, "judge.window.reference_chars", 20000) or 20000),
+        repeat=max(1, int(evaluator_config.config_value(config, "judge.repeat", 2) or 2)),
+        scorer_version=scorer_version,
+        workspace=workspace,
+        cache_path=str(cache_path),
+    )
+    return settings, judge_model, timeout_seconds, hit_rate_threshold
+
+
+def _summarize_rows(rows: List[Dict[str, Any]]) -> Tuple[int, List[str]]:
+    passed = sum(
+        1
+        for r in rows
+        if not r.get("error")
+        and bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
+            (r.get("must_contain_result") or {}).get("passed")
+            and (r.get("must_not_contain_result") or {}).get("passed")
+        ))
+    )
+    failures = [
+        str(r.get("id"))
+        for r in rows
+        if r.get("error")
+        or not bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
+            (r.get("must_contain_result") or {}).get("passed")
+            and (r.get("must_not_contain_result") or {}).get("passed")
+        ))
+    ]
+    return passed, failures
+
+
+def _write_outputs(
+    args: argparse.Namespace,
+    rows: List[Dict[str, Any]],
+    run_dir: Path,
+    judge_settings: Any,
+    original_project_path: str,
+) -> None:
+    if not args.no_report:
+        report_path = run_dir / "report.html"
+        generate_html(rows, str(report_path), judge_model=judge_settings.model)
+        print(f"[报告] {report_path}")
+    if args.save_db:
+        from evaluator import db_bridge
+        record = db_bridge.build_run_record(
+            run_dir=run_dir,
+            name=args.name,
+            project_path=original_project_path,
+        )
+        db_bridge.save_run_record(record)
+        print(f"[DB] 已写入 inspector.db: {record.run_id}  {record.passed_cases}/{record.total_cases} 通过")
+
+
+def main(argv=None) -> int:
+    args = _build_parser().parse_args(argv)
 
     config_path = evaluator_config.config_path_for_manifest(args.config)
     try:
@@ -75,18 +169,9 @@ def main(argv=None) -> int:
     print(f"[config] {config_path}")
 
     workspace = args.workspace or _default_workspace()
-    if args.cases:
-        cases_path = args.cases
-    else:
-        local_cases = INSPECTOR_DIR / "evalset" / args.adapter / "cases.json"
-        if local_cases.exists():
-            cases_path = str(local_cases)
-        elif args.adapter == "genshin":
-            cases_path = str(Path(workspace) / "golden_test_set.json")
-        else:
-            cases_path = str(local_cases)
-    if not Path(cases_path).exists():
-        print(f"[错误] 题集不存在: {cases_path}")
+    cases_path = _resolve_cases_path(args, workspace)
+    if not cases_path:
+        print("[错误] 题集不存在")
         return 2
 
     run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{random.randint(1000, 9999)}"
@@ -109,27 +194,8 @@ def main(argv=None) -> int:
         print("[错误] 过滤后没有题目")
         return 2
 
-    default_timeout = 900 if args.adapter == "doctor" else 300
-    configured_timeout = evaluator_config.config_value(config, "harness.timeout_seconds", None)
-    timeout_seconds = args.timeout or max(int(configured_timeout or 0), default_timeout)
-    judge_model = args.judge_model or str(evaluator_config.config_value(config, "judge.model", "deepseek-chat"))
-    scorer_version = "evaluator-phase2-1.0"
-    hit_rate_threshold = float(
-        evaluator_config.config_value(config, "scoring.must_contain_default_hit_rate", 0.8) or 0.8
-    )
-
-    judge_settings = judge.JudgeSettings(
-        model=judge_model,
-        temperature=float(evaluator_config.config_value(config, "judge.params.temperature", 0.0) or 0.0),
-        max_tokens=int(evaluator_config.config_value(config, "judge.params.max_tokens", 512) or 512),
-        thinking=str(evaluator_config.config_value(config, "judge.params.thinking", "disabled") or "disabled"),
-        contexts_chars=int(evaluator_config.config_value(config, "judge.window.contexts_chars", 60000) or 60000),
-        answer_chars=int(evaluator_config.config_value(config, "judge.window.answer_chars", 20000) or 20000),
-        reference_chars=int(evaluator_config.config_value(config, "judge.window.reference_chars", 20000) or 20000),
-        repeat=max(1, int(evaluator_config.config_value(config, "judge.repeat", 2) or 2)),
-        scorer_version=scorer_version,
-        workspace=workspace,
-        cache_path=str(cache_path),
+    judge_settings, judge_model, timeout_seconds, hit_rate_threshold = _build_judge_settings(
+        config, args, workspace, cache_path
     )
     judge.configure(judge_settings)
 
@@ -153,7 +219,7 @@ def main(argv=None) -> int:
             "answer_chars": judge_settings.answer_chars,
             "reference_chars": judge_settings.reference_chars,
         },
-        scorer_version=scorer_version,
+        scorer_version=judge_settings.scorer_version,
         config_path=config_path,
         adapter_version="1.0",
         notes=f"{args.adapter} adapter",
@@ -176,40 +242,10 @@ def main(argv=None) -> int:
     )
     judge.save_cache()
 
-    passed = sum(
-        1
-        for r in rows
-        if not r.get("error")
-        and bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
-            (r.get("must_contain_result") or {}).get("passed")
-            and (r.get("must_not_contain_result") or {}).get("passed")
-        ))
-    )
-    failures = [
-        r.get("id")
-        for r in rows
-        if r.get("error")
-        or not bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
-            (r.get("must_contain_result") or {}).get("passed")
-            and (r.get("must_not_contain_result") or {}).get("passed")
-        ))
-    ]
+    passed, failures = _summarize_rows(rows)
     print(f"[结果] {passed}/{len(rows)} 关键词硬指标通过；失败: {failures}")
 
-    if not args.no_report:
-        report_path = run_dir / "report.html"
-        generate_html(rows, str(report_path), judge_model=judge_settings.model)
-        print(f"[报告] {report_path}")
-
-    if args.save_db:
-        from evaluator import db_bridge
-        record = db_bridge.build_run_record(
-            run_dir=run_dir,
-            name=args.name,
-            project_path=original_project_path,
-        )
-        db_bridge.save_run_record(record)
-        print(f"[DB] 已写入 inspector.db: {record.run_id}  {record.passed_cases}/{record.total_cases} 通过")
+    _write_outputs(args, rows, run_dir, judge_settings, original_project_path)
 
     print(f"[manifest] {manifest_path}")
     return 0

@@ -18,7 +18,6 @@
     "evaluator/report.py::_render_detail_card",
     "evaluator/scorers/keywords.py::check_case_keywords",
     "exporter/genshin_exporter.py::build_trace_from_result",
-    "tools/check_cases_kb.py::check",
-    "tools/run_evalset.py::main"
+    "tools/check_cases_kb.py::check"
   ]
 }
