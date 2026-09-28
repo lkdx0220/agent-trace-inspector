@@ -441,6 +441,184 @@ def _assertions_from_patterns(
     return assertions
 
 
+def _fallback_resolution_report(
+    result: Dict[str, Any],
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+    extra_evidence: Optional[List[Dict[str, Any]]],
+    resolution: Optional[Dict[str, Any]],
+    fact_sheet: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """优先使用 CausalResolver 的确定性归因生成兜底报告。"""
+    if not resolution:
+        return None
+    kind = str(resolution.get("conclusion_kind") or "")
+    if kind in {"", "other"}:
+        return None
+    sheet = fact_sheet or {}
+    eids = [str(e) for e in (resolution.get("evidence_ids") or [])]
+    valid = evidence_ids(evidence_by_order, extra_evidence or [])
+    eids = [e for e in eids if e in valid]
+    if not eids:
+        eids = [oid for oid in evidence_by_order.keys() if any(e.get("ok") for e in evidence_by_order[oid])]
+    prescription = {
+        "issue": str(resolution.get("label") or "确定性归因"),
+        "root_cause": str(resolution.get("primary_root_cause") or ""),
+        "conclusion_kind": kind,
+        "fact_assertions": _assertions_from_patterns(kind, sheet),
+        "evidence_ids": eids,
+        "suggestion": str(resolution.get("suggestion_template") or "人工复核 8 阶段证据后确定修改方案。"),
+        "target_file": str(resolution.get("target_file") or ""),
+        "severity": "high" if kind not in {"version_unknown", "other"} else "medium",
+        "expected_effect": f"解决 {result.get('reasons') or result.get('case_id')} 对应的失败项",
+        "evidence_level": "L4" if eids else "L1",
+    }
+    return {
+        "diagnosis": {
+            "summary": str(resolution.get("label") or "确定性归因"),
+            "primary_root_cause": str(resolution.get("primary_root_cause") or ""),
+            "issue_classification": kind,
+            "key_evidence": eids,
+        },
+        "prescriptions": [prescription],
+        "confidence": 0.0,
+        "_note": "fallback_pipeline",
+    }
+
+
+def _fallback_trace_truth_prescription(oid: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    mism = data.get("plan_intent_mismatch") or {}
+    dis = data.get("evaluator_discrepancies") or []
+    if mism:
+        planned = "、".join(mism.get("plan_intents") or [])
+        actual = "、".join(mism.get("actual_tools") or []) if mism.get("actual_tools") else "无"
+        root = f"plan 文本规划调用 {planned}，但实际工具调用为 {actual}；属于 plan 结构化工具输出缺失"
+        return {
+            "issue": "plan 意图与实际工具调用不一致",
+            "root_cause": root,
+            "evidence_ids": [oid],
+            "suggestion": "重点排查 plan LLM 的结构化 tool_calls 输出：文本层已判断需要调用工具，但结构化输出层未生成调用；同时检查导出器是否遗漏 tool span。",
+            "target_file": "",
+            "severity": "high",
+            "expected_effect": "定位 plan 文本有意图但未实际调工具的问题",
+            "evidence_level": "L2",
+        }
+    if dis:
+        root = "Trace 真相重算发现评测器可能存在遗漏：" + "；".join(dis[:4])
+        return {
+            "issue": "评测器一致性差异",
+            "root_cause": root,
+            "evidence_ids": [oid],
+            "suggestion": "请人工核对 Trace 真相重算结果与评测器 reasons；若确认评测器漏报，应补强评测器或 LabOrders 生成规则。",
+            "target_file": "",
+            "severity": "medium",
+            "expected_effect": "纠正评测器漏报/误报带来的诊断盲区",
+            "evidence_level": "L2",
+        }
+    root = "Trace 真相重算完成，未发现 plan 意图与工具调用的明确不一致"
+    return {
+        "issue": "Trace 真相重算",
+        "root_cause": root,
+        "evidence_ids": [oid],
+        "suggestion": "该病例的 Trace 层面未见明显异常，继续结合其他证据判断。",
+        "target_file": "",
+        "severity": "low",
+        "expected_effect": "完成 Trace 独立对照",
+        "evidence_level": "L2",
+    }
+
+
+def _fallback_prescription(oid: str, ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """按检查单类别生成一条确定性候选处方。"""
+    category = ev.get("category") or ""
+    data = ev.get("data") or {}
+    keyword = str(data.get("keyword") or "")
+    if category == "missing_keyword" and keyword:
+        root = str(data.get("conclusion") or f"关键词「{keyword}」的出处需要人工复核")
+        return {
+            "issue": f"缺少必须包含关键词「{keyword}」",
+            "root_cause": root,
+            "evidence_ids": [oid],
+            "suggestion": "请人工核对上述证据：若知识库能命中但工具未返回，优先检查查询词/召回切片；若工具已返回但答案未用，优先检查回答阶段整合。",
+            "target_file": "",
+            "severity": "high",
+            "expected_effect": f"解决缺少必须包含：{keyword}",
+            "evidence_level": "L2",
+        }
+    if category == "forbidden_keyword" and keyword:
+        root = str(data.get("conclusion") or f"禁止词「{keyword}」的来源需要人工定位")
+        return {
+            "issue": f"答案出现禁止词「{keyword}」",
+            "root_cause": root,
+            "evidence_ids": [oid],
+            "suggestion": "请人工核对词出现的阶段；若是工具/提示词带入，考虑在回答阶段过滤或调整提示词；若是答案自行生成，考虑收紧回答规则。",
+            "target_file": "",
+            "severity": "high",
+            "expected_effect": f"解决出现禁止包含：{keyword}",
+            "evidence_level": "L2",
+        }
+    if category in {"prompt_violation", "zero_tool"}:
+        root = (
+            "非豁免场景未调用工具，或存在系统提示词合规违规；"
+            f"确定性证据：{str(ev.get('summary') or '')}"
+        )
+        return {
+            "issue": "工具调用/系统提示词合规问题",
+            "root_cause": root,
+            "evidence_ids": [oid],
+            "suggestion": "请人工确认 plan/answer 链路：是否有 tool_skip_reason、plan_retry 是否发生、answer 是否走了 not_found 短路。",
+            "target_file": "",
+            "severity": "high",
+            "expected_effect": "解决零工具调用或违反系统提示词的失败",
+            "evidence_level": "L2",
+        }
+    if category == "trace_truth_audit":
+        return _fallback_trace_truth_prescription(oid, data)
+    if category == "answer_integrity":
+        root = str(data.get("summary") or "最终答案与工具返回之间可能存在整合问题")
+        return {
+            "issue": "回答阶段整合待确认",
+            "root_cause": root,
+            "evidence_ids": [oid],
+            "suggestion": "请人工比对工具返回完整内容与最终答案，确认是否存在工具已命中但回答短路/漏用。",
+            "target_file": "",
+            "severity": "medium",
+            "expected_effect": "排查回答阶段的漏整合问题",
+            "evidence_level": "L2",
+        }
+    return None
+
+
+def _fallback_default_prescription(
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """没有任何可归纳证据时，至少给出一条人工复核处方。"""
+    if evidence_by_order:
+        first_oid = next(iter(evidence_by_order.keys()))
+        first_ev = next((e for e in evidence_by_order[first_oid] if e.get("ok")), None)
+        if first_ev:
+            root = f"医生 LLM 未产出有效 JSON，已执行检查单 {first_oid}；确定性证据：{str(first_ev.get('summary') or '待人工复核')}"
+            return [{
+                "issue": "医生 LLM 产出失败，需人工复核",
+                "root_cause": root,
+                "evidence_ids": [first_oid],
+                "suggestion": "基于检查单证据人工复核，或重跑医生诊断。",
+                "target_file": "",
+                "severity": "medium",
+                "expected_effect": "完成人工复核并形成处方",
+                "evidence_level": "L2",
+            }]
+    return [{
+        "issue": "医生 LLM 产出失败且无可执行检查单",
+        "root_cause": "医生 LLM 未在限定轮次内产出有效最终 JSON，且检查单证据为空，需人工重跑诊断。",
+        "evidence_ids": [],
+        "suggestion": "检查 API Key/模型调用或重跑医生。",
+        "target_file": "",
+        "severity": "medium",
+        "expected_effect": "恢复医生诊断",
+        "evidence_level": "L1",
+    }]
+
+
 def _fallback_report(
     result: Dict[str, Any],
     evidence_by_order: Dict[str, List[Dict[str, Any]]],
@@ -452,37 +630,9 @@ def _fallback_report(
 
     优先使用 CausalResolver 的确定性归因直接生成处方；没有归因时回退到按检查单类别归纳。
     """
-    if resolution and str(resolution.get("conclusion_kind") or "") not in {"", "other"}:
-        kind = str(resolution["conclusion_kind"])
-        sheet = fact_sheet or {}
-        eids = [str(e) for e in (resolution.get("evidence_ids") or [])]
-        valid = evidence_ids(evidence_by_order, extra_evidence or [])
-        eids = [e for e in eids if e in valid]
-        if not eids:
-            eids = [oid for oid in evidence_by_order.keys() if any(e.get("ok") for e in evidence_by_order[oid])]
-        prescription = {
-            "issue": str(resolution.get("label") or "确定性归因"),
-            "root_cause": str(resolution.get("primary_root_cause") or ""),
-            "conclusion_kind": kind,
-            "fact_assertions": _assertions_from_patterns(kind, sheet),
-            "evidence_ids": eids,
-            "suggestion": str(resolution.get("suggestion_template") or "人工复核 8 阶段证据后确定修改方案。"),
-            "target_file": str(resolution.get("target_file") or ""),
-            "severity": "high" if kind not in {"version_unknown", "other"} else "medium",
-            "expected_effect": f"解决 {result.get('reasons') or result.get('case_id')} 对应的失败项",
-            "evidence_level": "L4" if eids else "L1",
-        }
-        return {
-            "diagnosis": {
-                "summary": str(resolution.get("label") or "确定性归因"),
-                "primary_root_cause": str(resolution.get("primary_root_cause") or ""),
-                "issue_classification": kind,
-                "key_evidence": eids,
-            },
-            "prescriptions": [prescription],
-            "confidence": 0.0,
-            "_note": "fallback_pipeline",
-        }
+    pipeline_report = _fallback_resolution_report(result, evidence_by_order, extra_evidence, resolution, fact_sheet)
+    if pipeline_report is not None:
+        return pipeline_report
 
     prescriptions: List[Dict[str, Any]] = []
     evidence_ids_used: List[str] = []
@@ -490,137 +640,14 @@ def _fallback_report(
         ev = next((e for e in evs if e.get("ok")), None)
         if not ev:
             continue
-        category = ev.get("category") or ""
-        data = ev.get("data") or {}
-        keyword = str(data.get("keyword") or "")
-        if category == "missing_keyword" and keyword:
-            root = str(data.get("conclusion") or f"关键词「{keyword}」的出处需要人工复核")
-            prescriptions.append({
-                "issue": f"缺少必须包含关键词「{keyword}」",
-                "root_cause": root,
-                "evidence_ids": [oid],
-                "suggestion": "请人工核对上述证据：若知识库能命中但工具未返回，优先检查查询词/召回切片；若工具已返回但答案未用，优先检查回答阶段整合。",
-                "target_file": "",
-                "severity": "high",
-                "expected_effect": f"解决缺少必须包含：{keyword}",
-                "evidence_level": "L2",
-            })
-            evidence_ids_used.append(oid)
-        elif category == "forbidden_keyword" and keyword:
-            root = str(data.get("conclusion") or f"禁止词「{keyword}」的来源需要人工定位")
-            prescriptions.append({
-                "issue": f"答案出现禁止词「{keyword}」",
-                "root_cause": root,
-                "evidence_ids": [oid],
-                "suggestion": "请人工核对词出现的阶段；若是工具/提示词带入，考虑在回答阶段过滤或调整提示词；若是答案自行生成，考虑收紧回答规则。",
-                "target_file": "",
-                "severity": "high",
-                "expected_effect": f"解决出现禁止包含：{keyword}",
-                "evidence_level": "L2",
-            })
-            evidence_ids_used.append(oid)
-        elif category in {"prompt_violation", "zero_tool"}:
-            root = (
-                "非豁免场景未调用工具，或存在系统提示词合规违规；"
-                f"确定性证据：{str(ev.get('summary') or '')}"
-            )
-            prescriptions.append({
-                "issue": "工具调用/系统提示词合规问题",
-                "root_cause": root,
-                "evidence_ids": [oid],
-                "suggestion": "请人工确认 plan/answer 链路：是否有 tool_skip_reason、plan_retry 是否发生、answer 是否走了 not_found 短路。",
-                "target_file": "",
-                "severity": "high",
-                "expected_effect": "解决零工具调用或违反系统提示词的失败",
-                "evidence_level": "L2",
-            })
-            evidence_ids_used.append(oid)
-        elif category == "trace_truth_audit":
-            mism = data.get("plan_intent_mismatch") or {}
-            dis = data.get("evaluator_discrepancies") or []
-            if mism:
-                planned = "、".join(mism.get("plan_intents") or [])
-                actual = "、".join(mism.get("actual_tools") or []) if mism.get("actual_tools") else "无"
-                root = f"plan 文本规划调用 {planned}，但实际工具调用为 {actual}；属于 plan 结构化工具输出缺失"
-                prescriptions.append({
-                    "issue": "plan 意图与实际工具调用不一致",
-                    "root_cause": root,
-                    "evidence_ids": [oid],
-                    "suggestion": "重点排查 plan LLM 的结构化 tool_calls 输出：文本层已判断需要调用工具，但结构化输出层未生成调用；同时检查导出器是否遗漏 tool span。",
-                    "target_file": "",
-                    "severity": "high",
-                    "expected_effect": "定位 plan 文本有意图但未实际调工具的问题",
-                    "evidence_level": "L2",
-                })
-                evidence_ids_used.append(oid)
-            elif dis:
-                root = "Trace 真相重算发现评测器可能存在遗漏：" + "；".join(dis[:4])
-                prescriptions.append({
-                    "issue": "评测器一致性差异",
-                    "root_cause": root,
-                    "evidence_ids": [oid],
-                    "suggestion": "请人工核对 Trace 真相重算结果与评测器 reasons；若确认评测器漏报，应补强评测器或 LabOrders 生成规则。",
-                    "target_file": "",
-                    "severity": "medium",
-                    "expected_effect": "纠正评测器漏报/误报带来的诊断盲区",
-                    "evidence_level": "L2",
-                })
-                evidence_ids_used.append(oid)
-            else:
-                root = "Trace 真相重算完成，未发现 plan 意图与工具调用的明确不一致"
-                prescriptions.append({
-                    "issue": "Trace 真相重算",
-                    "root_cause": root,
-                    "evidence_ids": [oid],
-                    "suggestion": "该病例的 Trace 层面未见明显异常，继续结合其他证据判断。",
-                    "target_file": "",
-                    "severity": "low",
-                    "expected_effect": "完成 Trace 独立对照",
-                    "evidence_level": "L2",
-                })
-                evidence_ids_used.append(oid)
-
-        elif category == "answer_integrity":
-            root = str(data.get("summary") or "最终答案与工具返回之间可能存在整合问题")
-            prescriptions.append({
-                "issue": "回答阶段整合待确认",
-                "root_cause": root,
-                "evidence_ids": [oid],
-                "suggestion": "请人工比对工具返回完整内容与最终答案，确认是否存在工具已命中但回答短路/漏用。",
-                "target_file": "",
-                "severity": "medium",
-                "expected_effect": "排查回答阶段的漏整合问题",
-                "evidence_level": "L2",
-            })
+        prescription = _fallback_prescription(oid, ev)
+        if prescription is not None:
+            prescriptions.append(prescription)
             evidence_ids_used.append(oid)
 
-    if not prescriptions and evidence_by_order:
-        first_oid = next(iter(evidence_by_order.keys()))
-        first_ev = next((e for e in evidence_by_order[first_oid] if e.get("ok")), None)
-        if first_ev:
-            root = f"医生 LLM 未产出有效 JSON，已执行检查单 {first_oid}；确定性证据：{str(first_ev.get('summary') or '待人工复核')}"
-            prescriptions.append({
-                "issue": "医生 LLM 产出失败，需人工复核",
-                "root_cause": root,
-                "evidence_ids": [first_oid],
-                "suggestion": "基于检查单证据人工复核，或重跑医生诊断。",
-                "target_file": "",
-                "severity": "medium",
-                "expected_effect": "完成人工复核并形成处方",
-                "evidence_level": "L2",
-            })
-            evidence_ids_used.append(first_oid)
-    elif not prescriptions:
-        prescriptions.append({
-            "issue": "医生 LLM 产出失败且无可执行检查单",
-            "root_cause": "医生 LLM 未在限定轮次内产出有效最终 JSON，且检查单证据为空，需人工重跑诊断。",
-            "evidence_ids": [],
-            "suggestion": "检查 API Key/模型调用或重跑医生。",
-            "target_file": "",
-            "severity": "medium",
-            "expected_effect": "恢复医生诊断",
-            "evidence_level": "L1",
-        })
+    if not prescriptions:
+        prescriptions = _fallback_default_prescription(evidence_by_order)
+        evidence_ids_used = list(prescriptions[0].get("evidence_ids") or [])
 
     ev_summary = {
         oid: [e.get("summary") for e in evs]
@@ -638,7 +665,6 @@ def _fallback_report(
         "_evidence_digest": ev_summary,
         "_note": "fallback",
     }
-
 
 def _evidence_corpus_for_ids(
     eids: List[str],

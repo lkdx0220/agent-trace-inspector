@@ -108,3 +108,11 @@ def test_resolve_cause_rule_registry():
     state = {"chain": [], "missing_kws": [], "forbidden_kws": []}
     result = _rule_other({}, {}, state)
     assert result["conclusion_kind"] == "other"
+
+
+def test_fallback_default_prescription():
+    from app.services.project_doctor import _fallback_default_prescription
+    prescriptions = _fallback_default_prescription({})
+    assert len(prescriptions) == 1
+    assert prescriptions[0]["evidence_ids"] == []
+    assert prescriptions[0]["evidence_level"] == "L1"

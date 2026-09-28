@@ -10,7 +10,7 @@
     "app/services/lab_orders.py::generate_lab_orders",
     "app/services/metrics.py::compute_trace_metrics",
     "app/services/project_doctor.py::_conclusion_consistency_gate",
-    "app/services/project_doctor.py::_fallback_report",
+    "app/services/project_doctor.py::_fallback_resolution_report",
     "app/services/project_doctor.py::_final_grounding_check",
     "app/services/project_doctor.py::prescribe_run_case",
     "app/services/report_generator.py::generate_analysis_report",
