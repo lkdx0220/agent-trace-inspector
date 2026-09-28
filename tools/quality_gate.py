@@ -245,8 +245,8 @@ def check_vulture() -> Dict[str, Any]:
     }
 
 
-COVERAGE_WARN = 25.0
-COVERAGE_FAIL = 20.0
+COVERAGE_WARN = 30.0
+COVERAGE_FAIL = 25.0
 
 
 # ---------------------------------------------------------------
