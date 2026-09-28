@@ -9,7 +9,6 @@
     "app/services/project_doctor.py::_conclusion_consistency_gate",
     "app/services/project_doctor.py::_fallback_resolution_report",
     "app/services/project_doctor.py::_final_grounding_check",
-    "app/services/project_doctor.py::prescribe_run_case",
     "app/services/report_generator.py::generate_analysis_report",
     "evaluator/adapters/genshin.py::run_agent",
     "evaluator/db_bridge.py::build_case_result",

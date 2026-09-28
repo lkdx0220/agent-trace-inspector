@@ -169,3 +169,15 @@ def test_fact_sheet_routing_applier():
     })
     assert sheet["routing_event_seen"] is True
     assert sheet["routing_missing_required_tools"] == ["query_quest"]
+
+
+def test_doctor_tools_definition():
+    from app.services.project_doctor import _doctor_tools
+    names = {t["function"]["name"] for t in _doctor_tools()}
+    assert "run_lab_check" not in names
+    assert {"record_verified_claim", "pin_fact"} <= names
+
+
+def test_doctor_autofill_feedback_no_missing():
+    from app.services.project_doctor import _doctor_autofill_feedback
+    assert _doctor_autofill_feedback({}, [], {}) is None

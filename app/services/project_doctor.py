@@ -1236,16 +1236,12 @@ def _assign_evidence_levels(
     diag["evidence_level"] = "L4" if "L4" in levels else ("L2" if levels else "L1")
 
 
-def prescribe_run_case(
+def _doctor_case_context(
     run_id: str,
     case_id: str,
-    project_path: str = DEFAULT_PROJECT_PATH,
-    model: Optional[str] = None,
-) -> Dict[str, Any]:
-    """项目医生入口。返回完整诊断过程与处方。"""
-    global DOCTOR_MODEL
-    if model:
-        DOCTOR_MODEL = model
+    project_path: str,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any], Optional[Dict[str, Any]], Dict[str, Any]]:
+    """加载 Run/Case/Trace，构造医生上下文与检查单。"""
     try:
         project_path = str(ensure_project_path(project_path))
     except ValueError as e:
@@ -1266,7 +1262,6 @@ def prescribe_run_case(
     trace = get_trace(result.get("trace_id") or "") if result.get("trace_id") else None
     prompt_compliance = check_prompt_compliance(trace, project_path) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"}
     orders = generate_pipeline_orders(result, case, trace, prompt_compliance)
-
     ctx: Dict[str, Any] = {
         "run_id": run_id,
         "case_id": case_id,
@@ -1280,6 +1275,137 @@ def prescribe_run_case(
         "verified_claims": [],
         "pinned_facts": [],
     }
+    return ctx, orders, result, trace, prompt_compliance
+
+
+def _doctor_tools() -> List[Dict[str, Any]]:
+    tools = [t for t in llm_tool_definitions() if (t.get("function") or {}).get("name") != "run_lab_check"]
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "record_verified_claim",
+            "description": "记录一条已通过证据验证的事实。claim 必须能在 evidence_ids 对应证据原文中找到字面术语，否则会被拒绝。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string", "description": "已验证事实的一句话描述"},
+                    "evidence_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "支撑该事实的证据 ID，如 LO-001、EXT-001",
+                    },
+                },
+                "required": ["claim", "evidence_ids"],
+            },
+        },
+    })
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "pin_fact",
+            "description": "固定一条高信号事实到医生长期记忆；必须绑定一个真实证据 ID，且文本需在该证据原文中有字面支撑。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "要固定的事实"},
+                    "evidence_id": {"type": "string", "description": "支撑证据 ID"},
+                },
+                "required": ["text", "evidence_id"],
+            },
+        },
+    })
+    return tools
+
+
+def _doctor_execute_tool_calls(
+    tool_calls: List[Dict[str, Any]],
+    ctx: Dict[str, Any],
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+    extra_evidence: List[Dict[str, Any]],
+    turn: int,
+    messages: List[Dict[str, Any]],
+) -> None:
+    assistant_msg: Dict[str, Any] = {"role": "assistant", "content": None}
+    assistant_msg["tool_calls"] = tool_calls
+    messages.append(assistant_msg)
+    for tc in tool_calls:
+        fn = tc.get("function") or {}
+        name = fn.get("name", "")
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except Exception:
+            args = {}
+        result = _execute_tool(name, args, ctx, evidence_by_order, extra_evidence)
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tc.get("id") or f"tc-{turn}",
+            "content": _tool_content(result),
+        })
+
+
+def _doctor_autofill_feedback(
+    ctx: Dict[str, Any],
+    orders: List[Dict[str, Any]],
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+) -> Optional[str]:
+    missing = [o for o in orders if not any(e.get("ok") for e in evidence_by_order.get(o["id"], []))]
+    if not missing:
+        return None
+    filled = _autofill_missing(ctx, evidence_by_order)
+    digest = "\n".join(
+        f"{f['order_id']}: {'OK' if f['ok'] else 'ERROR'} {f.get('summary') or ''}"
+        for f in filled
+    )
+    return (
+        f"你试图在检查单未完成时结束，编排器已自动补齐以下检查：\n{digest}\n"
+        "现在证据库已完整。请基于全部证据重新输出最终医嘱 JSON，不要再提前结束。"
+    )
+
+
+def _doctor_validate_final(
+    report: Optional[Dict[str, Any]],
+    orders: List[Dict[str, Any]],
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+    extra_evidence: List[Dict[str, Any]],
+    ctx: Dict[str, Any],
+) -> Tuple[bool, Dict[str, Any]]:
+    validation = validate_prescriptions(report or {}, orders, evidence_by_order, extra_evidence)
+    grounding = _final_grounding_check(report or {}, evidence_by_order, extra_evidence)
+    near_miss = _near_miss_gate(report or {}, evidence_by_order, extra_evidence)
+    consistency = _conclusion_consistency_gate(report or {}, ctx, evidence_by_order, extra_evidence)
+    if report:
+        _assign_evidence_levels(report, evidence_by_order, extra_evidence)
+    combined_issues = validation["issues"] + grounding["issues"] + near_miss["issues"] + consistency["issues"]
+    ok = bool(
+        report
+        and validation["valid"]
+        and grounding["valid"]
+        and near_miss["valid"]
+        and consistency["valid"]
+    )
+    payload = {
+        "validation": validation,
+        "grounding": grounding,
+        "near_miss": near_miss,
+        "consistency": consistency,
+        "issues": combined_issues,
+    }
+    return ok, payload
+
+
+def prescribe_run_case(
+    run_id: str,
+    case_id: str,
+    project_path: str = DEFAULT_PROJECT_PATH,
+    model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """项目医生入口。返回完整诊断过程与处方。"""
+    global DOCTOR_MODEL
+    if model:
+        DOCTOR_MODEL = model
+
+    ctx, orders, result, trace, prompt_compliance = _doctor_case_context(run_id, case_id, project_path)
+    project_path = str(ctx["project_path"])
 
     # 迭代后架构：编排器先确定性地跑完 8 阶段探针并归因，
     # LLM 只负责在判定层内解释与开处方，不再决定“查什么”。
@@ -1297,42 +1423,7 @@ def prescribe_run_case(
     if not api_keys:
         return {"ok": False, "error": "缺少 DASHSCOPE_API_KEY", "lab_orders": orders}
 
-    tools = [t for t in llm_tool_definitions() if (t.get("function") or {}).get("name") != "run_lab_check"] + [
-        {
-            "type": "function",
-            "function": {
-                "name": "record_verified_claim",
-                "description": "记录一条已通过证据验证的事实。claim 必须能在 evidence_ids 对应证据原文中找到字面术语，否则会被拒绝。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "claim": {"type": "string", "description": "已验证事实的一句话描述"},
-                        "evidence_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "支撑该事实的证据 ID，如 LO-001、EXT-001",
-                        },
-                    },
-                    "required": ["claim", "evidence_ids"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "pin_fact",
-                "description": "固定一条高信号事实到医生长期记忆；必须绑定一个真实证据 ID，且文本需在该证据原文中有字面支撑。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "要固定的事实"},
-                        "evidence_id": {"type": "string", "description": "支撑证据 ID"},
-                    },
-                    "required": ["text", "evidence_id"],
-                },
-            },
-        },
-    ]
+    tools = _doctor_tools()
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": _build_system_prompt(ctx)},
         {"role": "user", "content": f"诊断对象 run={run_id} case={case_id}。8 阶段证据与 CausalResolver 归因已就绪，请输出最终医嘱 JSON。"},
@@ -1359,51 +1450,19 @@ def prescribe_run_case(
         tool_calls = msg.get("tool_calls") or []
 
         if tool_calls:
-            assistant_msg: Dict[str, Any] = {"role": "assistant", "content": content or None}
-            assistant_msg["tool_calls"] = tool_calls
-            messages.append(assistant_msg)
-            for tc in tool_calls:
-                fn = tc.get("function") or {}
-                name = fn.get("name", "")
-                try:
-                    args = json.loads(fn.get("arguments") or "{}")
-                except Exception:
-                    args = {}
-                result = _execute_tool(name, args, ctx, evidence_by_order, extra_evidence)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id") or f"tc-{turn}",
-                    "content": _tool_content(result),
-                })
+            _doctor_execute_tool_calls(tool_calls, ctx, evidence_by_order, extra_evidence, turn, messages)
             continue
 
         # LLM 想结束：先过覆盖闸门
-        missing = [o for o in orders if not any(e.get("ok") for e in evidence_by_order.get(o["id"], []))]
-        if missing:
-            filled = _autofill_missing(ctx, evidence_by_order)
-            digest = "\n".join(
-                f"{f['order_id']}: {'OK' if f['ok'] else 'ERROR'} {f.get('summary') or ''}"
-                for f in filled
-            )
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"你试图在检查单未完成时结束，编排器已自动补齐以下检查：\n{digest}\n"
-                    "现在证据库已完整。请基于全部证据重新输出最终医嘱 JSON，不要再提前结束。"
-                ),
-            })
+        autofill_feedback = _doctor_autofill_feedback(ctx, orders, evidence_by_order)
+        if autofill_feedback:
+            messages.append({"role": "user", "content": autofill_feedback})
             continue
 
         # 覆盖已 100%：尝试解析最终 JSON
         report = _extract_json(content)
-        validation = validate_prescriptions(report or {}, orders, evidence_by_order, extra_evidence)
-        grounding = _final_grounding_check(report or {}, evidence_by_order, extra_evidence)
-        near_miss = _near_miss_gate(report or {}, evidence_by_order, extra_evidence)
-        consistency = _conclusion_consistency_gate(report or {}, ctx, evidence_by_order, extra_evidence)
-        if report:
-            _assign_evidence_levels(report, evidence_by_order, extra_evidence)
-        combined_issues = validation["issues"] + grounding["issues"] + near_miss["issues"] + consistency["issues"]
-        if validation["valid"] and grounding["valid"] and near_miss["valid"] and consistency["valid"] and report:
+        ok, checks = _doctor_validate_final(report, orders, evidence_by_order, extra_evidence, ctx)
+        if ok and report:
             final_report = report
             final_report["_coverage"] = coverage_status(orders, evidence_by_order)
             final_report["_grounding"] = {"valid": True, "issues": []}
@@ -1413,7 +1472,7 @@ def prescribe_run_case(
 
         feedback = (
             "你输出的内容不是符合 schema、证据链闭合、逐字接地（grounded）、通过近成功闸门且结论一致性的 JSON。校验结果："
-            + json.dumps({"validation": validation, "grounding": grounding, "near_miss": near_miss, "consistency": consistency, "issues": combined_issues}, ensure_ascii=False)
+            + json.dumps(checks, ensure_ascii=False)
         )
         if not content:
             feedback = "你没有输出任何内容。请输出最终医嘱 JSON。"
