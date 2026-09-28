@@ -13,6 +13,8 @@
     "evaluator/adapters/genshin.py::run_agent",
     "evaluator/db_bridge.py::build_case_result",
     "evaluator/harness.py::run_case",
+    "evaluator/lint.py::_lint_keyword_item",
+    "evaluator/lint.py::_lint_question_meta",
     "evaluator/lint.py::lint_cases",
     "evaluator/report.py::generate_html",
     "evaluator/scorers/keywords.py::check_case_keywords",

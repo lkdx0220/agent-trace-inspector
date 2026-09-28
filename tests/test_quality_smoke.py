@@ -181,3 +181,25 @@ def test_doctor_tools_definition():
 def test_doctor_autofill_feedback_no_missing():
     from app.services.project_doctor import _doctor_autofill_feedback
     assert _doctor_autofill_feedback({}, [], {}) is None
+
+
+def test_lint_question_meta_rejects_bad_match_mode():
+    from evaluator.lint import _lint_question_meta
+    errors, warnings, info = [], [], []
+    _lint_question_meta({"match_mode": "bad", "must_contain": [], "must_not_contain": []}, "Q1", "questions[0]", errors, warnings, info)
+    assert any("match_mode 非法" in e for e in errors)
+
+
+def test_lint_keyword_item_semantic_skips_zero_hit():
+    from collections import Counter
+    from evaluator.lint import _lint_keyword_item
+    errors, warnings, zero_hit, semantic_skipped, unclassified = [], [], [], [], []
+    stats = Counter()
+    _lint_keyword_item(
+        "Q1", "questions[0]", "must_contain", {"text": "未收录", "match": "semantic"}, "",
+        [{"answer": "没有", "contexts": ""}], errors, warnings, stats,
+        unclassified, zero_hit, semantic_skipped,
+    )
+    assert stats["semantic"] == 1
+    assert semantic_skipped == ["Q1:未收录"]
+    assert zero_hit == []
