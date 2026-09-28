@@ -5,7 +5,6 @@
     "app/services/diagnoser.py::diagnose_run_case",
     "app/services/diagnostic_pipeline.py::_stage_knowledge_truth",
     "app/services/diagnostic_pipeline.py::build_fact_sheet",
-    "app/services/diagnostic_pipeline.py::resolve_cause",
     "app/services/doctor_tools.py::_trace_truth_audit",
     "app/services/evaluator.py::_evaluate_single_keyword_variant",
     "app/services/lab_orders.py::generate_lab_orders",

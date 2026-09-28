@@ -100,3 +100,11 @@ def test_lab_check_unknown_order_category():
     out = run_lab_check("LO-NOPE", {"lab_orders": [{"id": "LO-NOPE", "category": "no_such_category"}]})
     assert out["ok"] is False
     assert "未支持的检查类别" in out["summary"]
+
+
+def test_resolve_cause_rule_registry():
+    from app.services.diagnostic_pipeline import _RESOLVE_RULES, _rule_other
+    assert len(_RESOLVE_RULES) == 9
+    state = {"chain": [], "missing_kws": [], "forbidden_kws": []}
+    result = _rule_other({}, {}, state)
+    assert result["conclusion_kind"] == "other"
