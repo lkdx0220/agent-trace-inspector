@@ -853,52 +853,45 @@ def _extract_plan_tool_intents(plan_texts: List[str]) -> List[str]:
     return list(dict.fromkeys(intents))
 
 
-def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
-    """从 raw Trace 独立重算事实，不依赖评测器 reasons。
-
-    重点解决两类盲区：
-    1. plan 文本明确规划调用工具，但实际 tool_calls 为空；
-    2. 评测器漏报 / 误报的可见差异（缺词、禁词、零工具违规、not_found）。
-    """
-    trace = ctx.get("trace")
-    result = ctx.get("result") or {}
-    case = ctx.get("case") or {}
-    answer = str(result.get("answer") or "")
-    tool_spans = collect_tool_spans(trace)
-    actual = []
+def _audit_actual_tools(tool_spans: List[Dict[str, Any]], result: Dict[str, Any]) -> List[str]:
+    actual: List[str] = []
     for s in tool_spans:
         if s.get("name"):
             actual.append(str(s.get("name")))
     for t in (result.get("actual_tools") or []):
         if t not in actual:
             actual.append(str(t))
+    return actual
 
-    signal = _plan_signal(trace)
-    plan_texts = signal.get("execution_plans") or []
-    intents = _extract_plan_tool_intents(plan_texts)
-    plan_names = [str(n) for n in (signal.get("tool_call_names") or [])]
 
-    plan_intent_mismatch = None
+def _audit_plan_intent_mismatch(
+    intents: List[str],
+    plan_names: List[str],
+    actual: List[str],
+) -> Optional[Dict[str, Any]]:
     missing = [i for i in intents if i not in actual]
     if intents and missing:
-        plan_intent_mismatch = {
+        return {
             "plan_intents": intents,
             "actual_tools": actual,
             "missing": missing,
             "plan_tool_call_names": plan_names,
             "note": "plan 文本明确规划调用工具，但实际工具调用缺失",
         }
-    elif plan_names and not actual:
-        plan_intent_mismatch = {
+    if plan_names and not actual:
+        return {
             "plan_intents": plan_names,
             "actual_tools": actual,
             "missing": plan_names,
             "plan_tool_call_names": plan_names,
             "note": "plan 已给出结构化 tool_call_names，但实际没有任何工具 span",
         }
+    return None
 
-    not_found_tools = []
-    error_tools = []
+
+def _audit_tool_statuses(tool_spans: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    not_found_tools: List[Dict[str, Any]] = []
+    error_tools: List[Dict[str, Any]] = []
     for s in tool_spans:
         status = s.get("status")
         item = {
@@ -910,12 +903,16 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
             not_found_tools.append(item)
         elif status in {"error", "failed"}:
             error_tools.append(item)
+    return not_found_tools, error_tools
 
-    short = _short_circuit_answer(answer)
 
-    must_contain = case.get("must_contain") or []
-    must_not = case.get("must_not_contain") or []
-    must_contain_findings = []
+def _audit_keyword_findings(
+    must_contain: List[Any],
+    must_not: List[Any],
+    trace: Optional[Dict[str, Any]],
+    answer: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    must_contain_findings: List[Dict[str, Any]] = []
     for kw in must_contain:
         if not kw:
             continue
@@ -925,7 +922,7 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
             "in_answer": where["final_answer"],
             "in_tool_results": where["tool_results"],
         })
-    forbidden_findings = []
+    forbidden_findings: List[Dict[str, Any]] = []
     for kw in must_not:
         if not kw:
             continue
@@ -934,7 +931,19 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
             "in_answer": kw in answer,
             "in_tool_results": _find_where(kw, trace, answer)["tool_results"],
         })
+    return must_contain_findings, forbidden_findings
 
+
+def _audit_evaluator_discrepancies(
+    must_contain: List[Any],
+    must_not: List[Any],
+    answer: str,
+    result: Dict[str, Any],
+    plan_intent_mismatch: Optional[Dict[str, Any]],
+    tool_spans: List[Dict[str, Any]],
+    tool_skip_reason: Any,
+    not_found_tools: List[Dict[str, Any]],
+) -> List[str]:
     reasons_text = "\n".join(result.get("reasons") or [])
     discrepancies: List[str] = []
     for kw in must_contain:
@@ -943,15 +952,23 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
     for kw in must_not:
         if kw and kw in answer and f"出现禁止包含：{kw}" not in reasons_text:
             discrepancies.append(f"评测器未报“出现禁止包含：{kw}”")
-
     if plan_intent_mismatch and "违反系统提示词" not in reasons_text:
         discrepancies.append("plan 规划调用工具但实际未调用，评测器未标记系统提示词违规")
-    if not tool_spans and not signal.get("tool_skip_reason") and "违反系统提示词" not in reasons_text:
+    if not tool_spans and not tool_skip_reason and "违反系统提示词" not in reasons_text:
         discrepancies.append("零工具调用且无 tool_skip_reason，评测器未标记系统提示词违规")
     if not_found_tools and not any("未找到" in r or "not_found" in r.lower() for r in result.get("reasons") or []):
         discrepancies.append(f"存在 {len(not_found_tools)} 个 not_found 工具，评测器 reasons 未体现")
+    return discrepancies
 
-    summary_parts = []
+
+def _audit_summary(
+    plan_intent_mismatch: Optional[Dict[str, Any]],
+    discrepancies: List[str],
+    not_found_tools: List[Dict[str, Any]],
+    short: Optional[str],
+    actual: List[str],
+) -> str:
+    summary_parts: List[str] = []
     if plan_intent_mismatch:
         summary_parts.append(
             "plan 文本规划调用 " + "、".join(plan_intent_mismatch["plan_intents"]) +
@@ -966,6 +983,41 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
         summary_parts.append(f"答案存在短路串：{short}")
     if not summary_parts:
         summary_parts.append("Trace 真相重算完成，未发现 plan 意图与工具调用的明确不一致")
+    return "；".join(summary_parts)
+
+
+def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """从 raw Trace 独立重算事实，不依赖评测器 reasons。
+
+    重点解决两类盲区：
+    1. plan 文本明确规划调用工具，但实际 tool_calls 为空；
+    2. 评测器漏报 / 误报的可见差异（缺词、禁词、零工具违规、not_found）。
+    """
+    trace = ctx.get("trace")
+    result = ctx.get("result") or {}
+    case = ctx.get("case") or {}
+    answer = str(result.get("answer") or "")
+    tool_spans = collect_tool_spans(trace)
+    actual = _audit_actual_tools(tool_spans, result)
+
+    signal = _plan_signal(trace)
+    plan_texts = signal.get("execution_plans") or []
+    intents = _extract_plan_tool_intents(plan_texts)
+    plan_names = [str(n) for n in (signal.get("tool_call_names") or [])]
+    plan_intent_mismatch = _audit_plan_intent_mismatch(intents, plan_names, actual)
+
+    not_found_tools, error_tools = _audit_tool_statuses(tool_spans)
+    short = _short_circuit_answer(answer)
+
+    must_contain = case.get("must_contain") or []
+    must_not = case.get("must_not_contain") or []
+    must_contain_findings, forbidden_findings = _audit_keyword_findings(must_contain, must_not, trace, answer)
+
+    discrepancies = _audit_evaluator_discrepancies(
+        must_contain, must_not, answer, result,
+        plan_intent_mismatch, tool_spans, signal.get("tool_skip_reason"), not_found_tools,
+    )
+    summary = _audit_summary(plan_intent_mismatch, discrepancies, not_found_tools, short, actual)
 
     return {
         "actual_tools": actual,
@@ -980,7 +1032,7 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
         "must_not_contain_findings": forbidden_findings,
         "evaluator_discrepancies": discrepancies,
         "trace_metadata": (trace or {}).get("metadata") or {},
-        "summary": "；".join(summary_parts),
+        "summary": summary,
     }
 
 def _lab_context(ctx: Dict[str, Any]) -> Dict[str, Any]:

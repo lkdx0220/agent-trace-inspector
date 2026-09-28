@@ -138,3 +138,18 @@ def test_knowledge_summary_empty():
     summary = _knowledge_summary({}, {})
     assert "无缺失词" in summary
     assert "无禁词" in summary
+
+
+def test_audit_summary_plan_mismatch_and_short_circuit():
+    from app.services.doctor_tools import _audit_summary
+    summary = _audit_summary(
+        {"plan_intents": ["hybrid_search"]},
+        ["评测器未报零工具违规"],
+        [{"name": "query_character"}],
+        "当前知识库未收录",
+        [],
+    )
+    assert "plan 文本规划调用" in summary
+    assert "评测器一致性差异" in summary
+    assert "not_found 工具" in summary
+    assert "短路串" in summary

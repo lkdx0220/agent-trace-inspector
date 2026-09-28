@@ -4,7 +4,6 @@
   "functions": [
     "app/services/diagnoser.py::diagnose_run_case",
     "app/services/diagnostic_pipeline.py::build_fact_sheet",
-    "app/services/doctor_tools.py::_trace_truth_audit",
     "app/services/evaluator.py::_evaluate_single_keyword_variant",
     "app/services/lab_orders.py::generate_lab_orders",
     "app/services/metrics.py::compute_trace_metrics",
