@@ -675,3 +675,92 @@ def test_source_snapshot_compare(monkeypatch):
         assert unknown["trace_snapshot_known"] is False
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_judge_http_paths(monkeypatch):
+    from unittest import mock
+    from evaluator.scorers import judge
+
+    class Resp:
+        def __init__(self, status=200, payload=None, json_error=False):
+            self.status_code = status
+            self._payload = payload
+            self._json_error = json_error
+
+        def json(self):
+            if self._json_error:
+                raise ValueError("bad json")
+            return self._payload
+
+    monkeypatch.setattr(judge, "_CACHE", {})
+    monkeypatch.setattr(judge, "_CACHE_LOADED", True)
+    monkeypatch.setattr(judge, "_deepseek_api_key", lambda: "sk-test-key")
+
+    ok = Resp(200, {"choices": [{"message": {"content": "4"}, "finish_reason": "stop"}]})
+    with mock.patch("evaluator.scorers.judge.requests.post", return_value=ok) as post:
+        assert judge._call_judge_once("prompt-ok", max_tokens=8) == "4"
+        assert judge._call_judge_once("prompt-ok", max_tokens=8) == "4"
+        assert post.call_count == 1
+
+    bad_cases = [
+        ("http", Resp(500, {})),
+        ("format", Resp(200, {}, json_error=True)),
+        ("format", Resp(200, {"choices": []})),
+        ("format", Resp(200, {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]})),
+    ]
+    for expected_kind, resp in bad_cases:
+        with mock.patch("evaluator.scorers.judge.requests.post", return_value=resp):
+            try:
+                judge._call_judge_once("prompt-bad", max_tokens=8)
+                raise AssertionError(f"应抛 JudgeUnavailableError({expected_kind})")
+            except judge.JudgeUnavailableError as exc:
+                assert exc.kind == expected_kind
+
+    monkeypatch.setattr(judge, "_deepseek_api_key", lambda: "")
+    try:
+        judge._call_judge_once("prompt-no-key", max_tokens=8)
+        raise AssertionError("缺 Key 应抛 config")
+    except judge.JudgeUnavailableError as exc:
+        assert exc.kind == "config"
+
+    monkeypatch.setattr(judge, "_deepseek_api_key", lambda: "sk-test-key")
+    with mock.patch("evaluator.scorers.judge.requests.post", side_effect=RuntimeError("boom")):
+        try:
+            judge._call_judge_once("prompt-network", max_tokens=8)
+            raise AssertionError("网络异常应抛 network")
+        except judge.JudgeUnavailableError as exc:
+            assert exc.kind == "network"
+
+
+def test_judge_scores_and_cache(monkeypatch):
+    from pathlib import Path
+    from evaluator.scorers import judge
+
+    monkeypatch.setattr(judge, "_JUDGE_SAMPLES", [])
+    calls = []
+
+    def fake_once(prompt, max_tokens=None, attempt=0):
+        calls.append(attempt)
+        return "4" if attempt == 0 else "5"
+
+    monkeypatch.setattr(judge, "_call_judge_once", fake_once)
+    sample = judge.call_judge_scores("prompt-scores", max_tokens=8)
+    assert sample["scores"] == [4, 5]
+    assert sample["median"] == 4.5
+    assert calls == [0, 1]
+
+    cache_path = Path("quality/reports/test_judge_cache.json")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    settings = judge.JudgeSettings(cache_path=str(cache_path))
+    monkeypatch.setattr(judge, "get_settings", lambda: settings)
+    monkeypatch.setattr(judge, "_CACHE", {})
+    monkeypatch.setattr(judge, "_CACHE_LOADED", False)
+    try:
+        cache_path.write_text('{"k1": "v1"}', encoding="utf-8")
+        judge._load_cache()
+        assert judge._CACHE["k1"] == "v1"
+        judge._CACHE["k2"] = "v2"
+        judge.save_cache()
+        assert "k2" in cache_path.read_text(encoding="utf-8")
+    finally:
+        cache_path.unlink(missing_ok=True)
