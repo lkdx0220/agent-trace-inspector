@@ -116,3 +116,25 @@ def test_fallback_default_prescription():
     assert len(prescriptions) == 1
     assert prescriptions[0]["evidence_ids"] == []
     assert prescriptions[0]["evidence_level"] == "L1"
+
+
+def test_first_str_arg_and_knowledge_query_terms():
+    from app.services.diagnostic_pipeline import _first_str_arg, _knowledge_query_terms
+    assert _first_str_arg({"a": 1, "b": " 散兵 "}) == "散兵"
+    missing, forbidden, queries, nf_terms, char_terms = _knowledge_query_terms(
+        {"must_contain": ["童话", "备份"], "must_not_contain": ["黑暗"]},
+        "散兵为什么没被删记忆？",
+        [{"name": "query_character", "args": {"name": "散兵"}}],
+    )
+    assert missing == ["童话", "备份"]
+    assert forbidden == ["黑暗"]
+    assert "散兵为什么没被删记忆？ 童话" in queries
+    assert "散兵" in nf_terms
+    assert char_terms == ["散兵"]
+
+
+def test_knowledge_summary_empty():
+    from app.services.diagnostic_pipeline import _knowledge_summary
+    summary = _knowledge_summary({}, {})
+    assert "无缺失词" in summary
+    assert "无禁词" in summary

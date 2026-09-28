@@ -223,69 +223,70 @@ def _stage_tool_execution(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return summary, data
 
 
-def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    trace = ctx.get("trace")
-    result = ctx.get("result") or {}
-    case = ctx.get("case") or {}
-    answer = str(result.get("answer") or "")
-    question = str(result.get("question") or case.get("question") or "")
-    project_path = str(ctx.get("project_path") or DEFAULT_PROJECT_PATH)
+def _first_str_arg(args: Any) -> str:
+    for v in (args or {}).values():
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _knowledge_query_terms(
+    case: Dict[str, Any],
+    question: str,
+    not_found_tools: List[Dict[str, Any]],
+) -> Tuple[List[str], List[str], List[str], List[str], List[str]]:
     missing = [str(k) for k in (case.get("must_contain") or []) if str(k).strip()]
     forbidden = [str(k) for k in (case.get("must_not_contain") or []) if str(k).strip()]
-    not_found_tools = [c for c in _tool_calls_signal(trace) if c.get("status") == "not_found"]
-
-    # 批量检索：每个缺失词构造一条“题目 + 关键词”查询，一条子进程完成。
     queries: List[str] = []
     for kw in missing:
         q = f"{question} {kw}".strip()
         if q not in queries:
             queries.append(q)
     nf_terms: List[str] = []
-    for c in not_found_tools:
-        args = c.get("args") or {}
-        for v in args.values():
-            if isinstance(v, str) and v.strip():
-                nf_terms.append(v.strip())
-                if v.strip() not in queries:
-                    queries.append(v.strip())
-                break
-
-    raw_keywords = missing + forbidden + nf_terms
-    kb_probe = knowledge_probe_batch(project_path, queries, top_k=5) if queries else {"ok": True, "data": {"queries": {}}}
-    raw_probe = raw_kb_contains_multi(project_path, raw_keywords) if raw_keywords else {"ok": True, "data": {}}
     char_terms: List[str] = []
     for c in not_found_tools:
-        if c.get("name") != "query_character":
-            continue
-        args = c.get("args")
-        if not isinstance(args, dict) or not args:
-            continue
-        first = next(iter(args.values()), "")
-        if isinstance(first, str):
-            char_terms.append(first)
+        term = _first_str_arg(c.get("args"))
+        if term:
+            nf_terms.append(term)
+            if term not in queries:
+                queries.append(term)
+        if c.get("name") == "query_character" and term:
+            char_terms.append(term)
+    return missing, forbidden, queries, nf_terms, char_terms
+
+
+def _knowledge_probes(
+    project_path: str,
+    queries: List[str],
+    raw_keywords: List[str],
+    char_terms: List[str],
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    kb_probe = knowledge_probe_batch(project_path, queries, top_k=5) if queries else {"ok": True, "data": {"queries": {}}}
+    raw_probe = raw_kb_contains_multi(project_path, raw_keywords) if raw_keywords else {"ok": True, "data": {}}
     alias_probe = (
         inspect_aliases_multi(project_path, char_terms)
         if char_terms
         else {"ok": True, "data": {}}
     )
+    return kb_probe, raw_probe, alias_probe
 
-    kb_data = kb_probe.get("data")
-    kb_queries = kb_data.get("queries") if isinstance(kb_data, dict) else {}
-    kb_queries = kb_queries or {}
-    raw_probe_data = raw_probe.get("data")
-    raw_data = raw_probe_data if isinstance(raw_probe_data, dict) else {}
-    alias_probe_data = alias_probe.get("data")
-    alias_data = alias_probe_data if isinstance(alias_probe_data, dict) else {}
 
-    # 当前提示词/规则视角：用于禁词来源判断，版本适用性由 STG-07 单独说明。
-    plan_prompt_text = ""
-    answer_prompt_text = ""
+def _knowledge_prompt_texts(project_path: str) -> Tuple[str, str]:
     try:
-        plan_prompt_text = get_plan_system_prompt(project_path)
-        answer_prompt_text = get_answer_system_prompt(project_path)
+        return get_plan_system_prompt(project_path), get_answer_system_prompt(project_path)
     except Exception:
-        pass
+        return "", ""
 
+
+def _knowledge_keyword_results(
+    missing: List[str],
+    trace: Optional[Dict[str, Any]],
+    answer: str,
+    question: str,
+    kb_probe: Dict[str, Any],
+    kb_queries: Dict[str, Any],
+    raw_data: Dict[str, Any],
+) -> Dict[str, Any]:
     keyword_results: Dict[str, Any] = {}
     for kw in missing:
         where = _find_where(kw, trace, answer)
@@ -302,7 +303,17 @@ def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             "kb_query": q,
             "kb_output_is_error": isinstance(raw_out, str) and raw_out.startswith("ERROR"),
         }
+    return keyword_results
 
+
+def _knowledge_forbidden_results(
+    forbidden: List[str],
+    trace: Optional[Dict[str, Any]],
+    answer: str,
+    raw_data: Dict[str, Any],
+    plan_prompt_text: str,
+    answer_prompt_text: str,
+) -> Dict[str, Any]:
     forbidden_results: Dict[str, Any] = {}
     for kw in forbidden:
         where = _find_where(kw, trace, answer)
@@ -313,15 +324,17 @@ def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             "raw_hits": raw_entry.get("hits") or [],
             "prompt_current_contains": (kw in plan_prompt_text) or (kw in answer_prompt_text),
         }
+    return forbidden_results
 
+
+def _knowledge_not_found_results(
+    not_found_tools: List[Dict[str, Any]],
+    raw_data: Dict[str, Any],
+    alias_data: Dict[str, Any],
+) -> List[Dict[str, Any]]:
     nf_results: List[Dict[str, Any]] = []
     for c in not_found_tools:
-        args = c.get("args") or {}
-        term = ""
-        for v in args.values():
-            if isinstance(v, str) and v:
-                term = str(v)
-                break
+        term = _first_str_arg(c.get("args"))
         raw_entry = raw_data.get(term) or {}
         alias_entry = alias_data.get(term) or {}
         nf_results.append({
@@ -332,6 +345,46 @@ def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             "alias_canonical": alias_entry.get("canonical"),
             "alias_variants": alias_entry.get("variants") or [],
         })
+    return nf_results
+
+
+def _knowledge_summary(keyword_results: Dict[str, Any], forbidden_results: Dict[str, Any]) -> str:
+    missing_summary = "；".join(
+        f"{kw}(tool={r['where'].get('tool_results')},answer={r['where'].get('final_answer')},kb={r.get('kb_hit')},raw={r.get('raw_contains')})"
+        for kw, r in keyword_results.items()
+    ) or "无缺失词"
+    forbidden_summary = "；".join(
+        f"{kw}(answer={r['where'].get('final_answer')},tool={r['where'].get('tool_results')},prompt={r.get('prompt_current_contains')})"
+        for kw, r in forbidden_results.items()
+    ) or "无禁词"
+    return f"知识库真值核对完成。缺失词: {missing_summary}。禁词: {forbidden_summary}"
+
+
+def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    trace = ctx.get("trace")
+    result = ctx.get("result") or {}
+    case = ctx.get("case") or {}
+    answer = str(result.get("answer") or "")
+    question = str(result.get("question") or case.get("question") or "")
+    project_path = str(ctx.get("project_path") or DEFAULT_PROJECT_PATH)
+    not_found_tools = [c for c in _tool_calls_signal(trace) if c.get("status") == "not_found"]
+
+    missing, forbidden, queries, nf_terms, char_terms = _knowledge_query_terms(case, question, not_found_tools)
+    raw_keywords = missing + forbidden + nf_terms
+    kb_probe, raw_probe, alias_probe = _knowledge_probes(project_path, queries, raw_keywords, char_terms)
+
+    kb_data = kb_probe.get("data")
+    kb_queries = kb_data.get("queries") if isinstance(kb_data, dict) else {}
+    kb_queries = kb_queries or {}
+    raw_probe_data = raw_probe.get("data")
+    raw_data = raw_probe_data if isinstance(raw_probe_data, dict) else {}
+    alias_probe_data = alias_probe.get("data")
+    alias_data = alias_probe_data if isinstance(alias_probe_data, dict) else {}
+
+    plan_prompt_text, answer_prompt_text = _knowledge_prompt_texts(project_path)
+    keyword_results = _knowledge_keyword_results(missing, trace, answer, question, kb_probe, kb_queries, raw_data)
+    forbidden_results = _knowledge_forbidden_results(forbidden, trace, answer, raw_data, plan_prompt_text, answer_prompt_text)
+    nf_results = _knowledge_not_found_results(not_found_tools, raw_data, alias_data)
 
     data = {
         "keyword_results": keyword_results,
@@ -341,15 +394,7 @@ def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         "raw_probe": raw_probe,
         "alias_probe": alias_probe,
     }
-    missing_summary = "；".join(
-        f"{kw}(tool={r['where'].get('tool_results')},answer={r['where'].get('final_answer')},kb={r.get('kb_hit')},raw={r.get('raw_contains')})"
-        for kw, r in keyword_results.items()
-    ) or "无缺失词"
-    forbidden_summary = "；".join(
-        f"{kw}(answer={r['where'].get('final_answer')},tool={r['where'].get('tool_results')},prompt={r.get('prompt_current_contains')})"
-        for kw, r in forbidden_results.items()
-    ) or "无禁词"
-    return f"知识库真值核对完成。缺失词: {missing_summary}。禁词: {forbidden_summary}", data
+    return _knowledge_summary(keyword_results, forbidden_results), data
 
 
 def _stage_answer(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
