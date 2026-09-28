@@ -278,3 +278,32 @@ def test_build_trace_header():
     assert trace_id.startswith("trace_")
     assert response_mode == "not_found"
     assert root.span_type.value == "agent"
+
+
+def test_adapter_module_and_payload():
+    from evaluator.harness import _adapter_module, _build_adapter_payload
+    assert _adapter_module("genshin") == "evaluator.adapters.genshin"
+    assert _adapter_module("nope") is None
+    payload = _build_adapter_payload({"id": "Q1", "question": "q"})
+    assert payload["case_id"] == "Q1"
+    assert payload["question"] == "q"
+
+
+def test_build_initial_state():
+    from evaluator.adapters.genshin import _build_initial_state
+    state = _build_initial_state("Q", "ctx")
+    assert state["user_query"] == "Q"
+    assert state["conversation_history"] == [{"user": "ctx", "assistant": "（上轮回答略）"}]
+
+
+def test_evaluate_must_contain_literal():
+    from app.services.evaluator import _evaluate_must_contain
+    result = _evaluate_must_contain("答案包含钟离", ["钟离"], "all", None)
+    assert result["contains_ok"] is True
+    assert result["hit_count"] == 1
+
+
+def test_render_detail_card_error():
+    from evaluator.report import _render_detail_card
+    html = _render_detail_card({"id": "Q1", "category": "x", "error": "boom"})
+    assert "boom" in html

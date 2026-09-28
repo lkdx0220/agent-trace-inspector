@@ -97,6 +97,50 @@ def _lint_obsolete_terms(
             warnings.append(f"{qid or label} 题面仍包含旧词「{old_term}」：{hint}")
 
 
+def _lint_match_mode(q: Dict[str, Any], qid: str, label: str, errors: List[str]) -> None:
+    match_mode = q.get("match_mode")
+    if match_mode not in ALLOWED_MATCH_MODE:
+        errors.append(f"{qid or label} match_mode 非法: {match_mode!r}")
+
+
+def _lint_stability(q: Dict[str, Any], qid: str, label: str, errors: List[str]) -> Any:
+    stability = q.get("stability")
+    if stability is not None and stability not in ALLOWED_STABILITY:
+        errors.append(f"{qid or label} stability 非法: {stability!r}（允许 {sorted(ALLOWED_STABILITY)}）")
+    return stability
+
+
+def _lint_agent_repeat(
+    q: Dict[str, Any],
+    qid: str,
+    label: str,
+    stability: Any,
+    errors: List[str],
+    warnings: List[str],
+    info: List[str],
+) -> None:
+    agent_repeat = q.get("agent_repeat")
+    if agent_repeat is None:
+        return
+    if not isinstance(agent_repeat, int) or isinstance(agent_repeat, bool) or agent_repeat < 1:
+        errors.append(f"{qid or label} agent_repeat 必须是 >=1 的整数: {agent_repeat!r}")
+    elif stability == "noisy" and agent_repeat < 3:
+        warnings.append(f"{qid or label} 标为 noisy 但 agent_repeat={agent_repeat} < 3，判分分辨率不足")
+    elif stability == "stable" and agent_repeat > 1:
+        info.append(f"{qid or label} 标为 stable 但 agent_repeat={agent_repeat}，多跑不额外增加信息")
+    elif agent_repeat % 2 == 0:
+        warnings.append(f"{qid or label} agent_repeat={agent_repeat} 为偶数，会出现平票（当前规则平票判不通过），建议用 1 或 3")
+
+
+def _lint_criteria_and_lists(q: Dict[str, Any], qid: str, label: str, errors: List[str]) -> None:
+    if q.get("criteria_version") not in (None, "original", "relaxed"):
+        errors.append(f"{qid or label} criteria_version 非法: {q.get('criteria_version')!r}")
+    if not isinstance(q.get("must_contain"), list):
+        errors.append(f"{qid or label} must_contain 必须是数组")
+    if not isinstance(q.get("must_not_contain"), list):
+        errors.append(f"{qid or label} must_not_contain 必须是数组")
+
+
 def _lint_question_meta(
     q: Dict[str, Any],
     qid: str,
@@ -105,29 +149,62 @@ def _lint_question_meta(
     warnings: List[str],
     info: List[str],
 ) -> None:
-    match_mode = q.get("match_mode")
-    if match_mode not in ALLOWED_MATCH_MODE:
-        errors.append(f"{qid or label} match_mode 非法: {match_mode!r}")
+    _lint_match_mode(q, qid, label, errors)
     # 稳定性标签与取票次数：噪声地板 4%-16%，noisy 题必须 >=3 次多数通过才判得住。
-    stability = q.get("stability")
-    if stability is not None and stability not in ALLOWED_STABILITY:
-        errors.append(f"{qid or label} stability 非法: {stability!r}（允许 {sorted(ALLOWED_STABILITY)}）")
-    agent_repeat = q.get("agent_repeat")
-    if agent_repeat is not None:
-        if not isinstance(agent_repeat, int) or isinstance(agent_repeat, bool) or agent_repeat < 1:
-            errors.append(f"{qid or label} agent_repeat 必须是 >=1 的整数: {agent_repeat!r}")
-        elif stability == "noisy" and agent_repeat < 3:
-            warnings.append(f"{qid or label} 标为 noisy 但 agent_repeat={agent_repeat} < 3，判分分辨率不足")
-        elif stability == "stable" and agent_repeat > 1:
-            info.append(f"{qid or label} 标为 stable 但 agent_repeat={agent_repeat}，多跑不额外增加信息")
-        elif agent_repeat % 2 == 0:
-            warnings.append(f"{qid or label} agent_repeat={agent_repeat} 为偶数，会出现平票（当前规则平票判不通过），建议用 1 或 3")
-    if q.get("criteria_version") not in (None, "original", "relaxed"):
-        errors.append(f"{qid or label} criteria_version 非法: {q.get('criteria_version')!r}")
-    if not isinstance(q.get("must_contain"), list):
-        errors.append(f"{qid or label} must_contain 必须是数组")
-    if not isinstance(q.get("must_not_contain"), list):
-        errors.append(f"{qid or label} must_not_contain 必须是数组")
+    stability = _lint_stability(q, qid, label, errors)
+    _lint_agent_repeat(q, qid, label, stability, errors, warnings, info)
+    _lint_criteria_and_lists(q, qid, label, errors)
+
+
+def _lint_keyword_raw(
+    qid: str,
+    label: str,
+    kind: str,
+    raw: Any,
+    errors: List[str],
+    keyword_stats: Counter,
+    keyword_unclassified: List[str],
+) -> Optional[Tuple[str, str]]:
+    text, match, _ = _normalize_keyword(raw)
+    if not text:
+        errors.append(f"{qid or label} {kind} 有空关键词")
+        return None
+    if match is None:
+        keyword_stats["unclassified"] += 1
+        keyword_unclassified.append(f"{qid}:{text}")
+        return None
+    if match not in ALLOWED_MATCH:
+        errors.append(f"{qid or label} 关键词「{text}」match 非法: {match!r}")
+        return None
+    keyword_stats[match] += 1
+    return text, match
+
+
+def _lint_keyword_hits(
+    text: str,
+    match: str,
+    kind: str,
+    qid: str,
+    label: str,
+    answer: str,
+    results_cache: List[Dict[str, Any]],
+    warnings: List[str],
+    zero_hit: List[Dict[str, str]],
+    semantic_zero_skipped: List[str],
+) -> None:
+    if kind != "must_contain":
+        return
+    if results_cache and match != "semantic":
+        hits = sum(1 for r in results_cache if _keyword_hit(text, str(r.get("answer") or "")))
+        ctx_hits = sum(1 for r in results_cache if _keyword_hit(text, str(r.get("contexts") or "")))
+        if hits == 0 and ctx_hits == 0:
+            zero_hit.append({"case_id": qid, "keyword": text, "answer_hits": "0", "ctx_hits": "0"})
+    elif results_cache and match == "semantic":
+        # 语义词本来就允许同义改写，不能因为字面 0 命中就告警；
+        # 它的有效性由 judge 在跑测时判定。
+        semantic_zero_skipped.append(f"{qid}:{text}")
+    elif not answer:
+        warnings.append(f"{qid or label} 缺少 reference_answer，无法做词表体检")
 
 
 def _lint_keyword_item(
@@ -144,48 +221,34 @@ def _lint_keyword_item(
     zero_hit: List[Dict[str, str]],
     semantic_zero_skipped: List[str],
 ) -> None:
-    text, match, _ = _normalize_keyword(raw)
-    if not text:
-        errors.append(f"{qid or label} {kind} 有空关键词")
+    normalized = _lint_keyword_raw(qid, label, kind, raw, errors, keyword_stats, keyword_unclassified)
+    if normalized is None:
         return
-    if match is None:
-        keyword_stats["unclassified"] += 1
-        keyword_unclassified.append(f"{qid}:{text}")
-        return
-    if match not in ALLOWED_MATCH:
-        errors.append(f"{qid or label} 关键词「{text}」match 非法: {match!r}")
-        return
-    keyword_stats[match] += 1
-    if kind == "must_contain" and results_cache and match != "semantic":
-        hits = sum(1 for r in results_cache if _keyword_hit(text, str(r.get("answer") or "")))
-        ctx_hits = sum(1 for r in results_cache if _keyword_hit(text, str(r.get("contexts") or "")))
-        if hits == 0 and ctx_hits == 0:
-            zero_hit.append({"case_id": qid, "keyword": text, "answer_hits": "0", "ctx_hits": "0"})
-    elif kind == "must_contain" and results_cache and match == "semantic":
-        # 语义词本来就允许同义改写，不能因为字面 0 命中就告警；
-        # 它的有效性由 judge 在跑测时判定。
-        semantic_zero_skipped.append(f"{qid}:{text}")
-    elif kind == "must_contain" and not answer:
-        warnings.append(f"{qid or label} 缺少 reference_answer，无法做词表体检")
+    text, match = normalized
+    _lint_keyword_hits(
+        text, match, kind, qid, label, answer, results_cache,
+        warnings, zero_hit, semantic_zero_skipped,
+    )
 
 
-def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
-    errors: List[str] = []
-    warnings: List[str] = []
-    info: List[str] = []
-
+def _load_lint_cases(cases_path: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     if not os.path.exists(cases_path):
-        return {"ok": False, "errors": [f"题集文件不存在: {cases_path}"], "warnings": [], "info": []}
-
+        return None, {"ok": False, "errors": [f"题集文件不存在: {cases_path}"], "warnings": [], "info": []}
     try:
         with open(cases_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as exc:
-        return {"ok": False, "errors": [f"题集 JSON 解析失败: {type(exc).__name__}: {exc}"], "warnings": [], "info": []}
-
+        return None, {"ok": False, "errors": [f"题集 JSON 解析失败: {type(exc).__name__}: {exc}"], "warnings": [], "info": []}
     if not isinstance(data, dict):
-        return {"ok": False, "errors": ["题集根节点必须是 JSON 对象"], "warnings": [], "info": []}
+        return None, {"ok": False, "errors": ["题集根节点必须是 JSON 对象"], "warnings": [], "info": []}
+    return data, None
 
+
+def _validate_lint_metadata(
+    data: Dict[str, Any],
+    errors: List[str],
+    warnings: List[str],
+) -> List[Dict[str, Any]]:
     if not data.get("schema_version"):
         warnings.append("缺少 schema_version，建议补 \"1.0\"")
     metadata = data.get("metadata")
@@ -196,26 +259,28 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
     if not isinstance(questions, list) or not questions:
         errors.append("缺少非空的 questions 数组")
         questions = []
-
     total = metadata.get("total_questions")
     if not isinstance(total, int):
         errors.append("metadata.total_questions 必须是整数")
     elif total != len(questions):
         errors.append(f"metadata.total_questions={total} 与实际题数 {len(questions)} 不一致")
-
     if not metadata.get("project"):
         warnings.append("metadata.project 为空，建议填项目标识（如 genshin / doctor）")
+    return questions
 
-    keyword_stats: Counter = Counter()
-    keyword_unclassified: List[str] = []
-    zero_hit: List[Dict[str, str]] = []
-    semantic_zero_skipped: List[str] = []
+
+def _lint_questions(
+    questions: List[Dict[str, Any]],
+    results_cache: List[Dict[str, Any]],
+    errors: List[str],
+    warnings: List[str],
+    info: List[str],
+    keyword_stats: Counter,
+    keyword_unclassified: List[str],
+    zero_hit: List[Dict[str, str]],
+    semantic_zero_skipped: List[str],
+) -> None:
     question_ids: List[str] = []
-    results_cache: List[Dict[str, Any]] = []
-
-    if results_dir:
-        results_cache = _load_results(results_dir)
-
     for index, q in enumerate(questions):
         if not isinstance(q, dict):
             errors.append(f"questions[{index}] 不是对象")
@@ -231,6 +296,18 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
                     keyword_stats, keyword_unclassified, zero_hit, semantic_zero_skipped,
                 )
 
+
+def _build_lint_info(
+    results_dir: str,
+    questions: List[Dict[str, Any]],
+    results_cache: List[Dict[str, Any]],
+    warnings: List[str],
+    info: List[str],
+    keyword_stats: Counter,
+    keyword_unclassified: List[str],
+    zero_hit: List[Dict[str, str]],
+    semantic_zero_skipped: List[str],
+) -> None:
     if keyword_unclassified:
         warnings.append(
             f"还有 {len(keyword_unclassified)} 个关键词是旧字符串格式，建议迁移为 "
@@ -240,10 +317,8 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
         warnings.append(f"{len(zero_hit)} 个 must_contain 在历史结果里 answer/contexts 命中均为 0，建议复核")
     if semantic_zero_skipped:
         info.append(f"{len(semantic_zero_skipped)} 个语义关键词跳过字面零命中体检（由 judge 判同义表达）")
-
     if results_dir and not results_cache:
         warnings.append(f"results 目录没有找到 q_*.json: {results_dir}")
-
     info.append(f"题数: {len(questions)}")
     info.append(
         "关键词分类: "
@@ -251,6 +326,34 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
         f"semantic={keyword_stats.get('semantic', 0)}, "
         f"structural={keyword_stats.get('structural', 0)}, "
         f"unclassified={keyword_stats.get('unclassified', 0)}"
+    )
+
+
+def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
+    errors: List[str] = []
+    warnings: List[str] = []
+    info: List[str] = []
+
+    data, error_report = _load_lint_cases(cases_path)
+    if error_report is not None:
+        return error_report
+    questions = _validate_lint_metadata(data or {}, errors, warnings)
+
+    keyword_stats: Counter = Counter()
+    keyword_unclassified: List[str] = []
+    zero_hit: List[Dict[str, str]] = []
+    semantic_zero_skipped: List[str] = []
+    results_cache: List[Dict[str, Any]] = []
+    if results_dir:
+        results_cache = _load_results(results_dir)
+
+    _lint_questions(
+        questions, results_cache, errors, warnings, info,
+        keyword_stats, keyword_unclassified, zero_hit, semantic_zero_skipped,
+    )
+    _build_lint_info(
+        results_dir, questions, results_cache, warnings, info,
+        keyword_stats, keyword_unclassified, zero_hit, semantic_zero_skipped,
     )
 
     return {
@@ -265,6 +368,7 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
         "zero_hit_keywords": zero_hit,
         "semantic_zero_skipped": semantic_zero_skipped[:50],
     }
+
 
 def _load_results(results_dir: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []

@@ -194,17 +194,7 @@ def _variant_score(must_contain_result: Dict[str, Any], must_not_contain_result:
     )
 
 
-def check_case_keywords(
-    case: Dict[str, Any],
-    answer: str,
-    hit_rate_threshold: float = 0.8,
-) -> Dict[str, Any]:
-    """主标准 + alternatives 双答案/多答案判定。
-
-    任一变体通过即 keyword_pass=True；未通过时取综合得分最高的变体作为代表，
-    与旧 app.services.evaluator.evaluate_keywords 的行为保持一致。
-    """
-    question = str(case.get("question") or "")
+def _build_variants(case: Dict[str, Any]) -> List[Dict[str, Any]]:
     variants: List[Dict[str, Any]] = [
         {
             "name": "标准答案",
@@ -222,7 +212,15 @@ def check_case_keywords(
             "must_not_contain": alt.get("must_not_contain") or [],
             "match_mode": str(alt.get("match_mode") or "all"),
         })
+    return variants
 
+
+def _evaluate_variants(
+    answer: str,
+    variants: List[Dict[str, Any]],
+    question: str,
+    hit_rate_threshold: float,
+) -> List[Dict[str, Any]]:
     variant_results: List[Dict[str, Any]] = []
     for variant in variants:
         mc = check_must_contain(
@@ -239,25 +237,53 @@ def check_case_keywords(
             "must_contain_result": mc,
             "must_not_contain_result": mnc,
         })
+    return variant_results
 
-    any_passed = any(item["passed"] for item in variant_results)
+
+def _pick_representative(variant_results: List[Dict[str, Any]], any_passed: bool) -> Dict[str, Any]:
     if any_passed:
-        representative = next(item for item in variant_results if item["passed"])
-    else:
-        representative = max(
-            variant_results,
-            key=lambda item: _variant_score(item["must_contain_result"], item["must_not_contain_result"]),
-        )
+        return next(item for item in variant_results if item["passed"])
+    return max(
+        variant_results,
+        key=lambda item: _variant_score(item["must_contain_result"], item["must_not_contain_result"]),
+    )
 
-    mc_rep = representative["must_contain_result"]
-    mnc_rep = representative["must_not_contain_result"]
+
+def _build_variant_reasons(
+    mc_rep: Dict[str, Any],
+    mnc_rep: Dict[str, Any],
+    any_passed: bool,
+    variant_count: int,
+) -> List[str]:
     reasons: List[str] = []
     if not mc_rep.get("passed"):
         reasons.extend(f"缺少必须包含：{kw}" for kw in mc_rep.get("miss") or [])
     if not mnc_rep.get("passed"):
         reasons.extend(f"出现禁止包含：{kw}" for kw in mnc_rep.get("violations") or [])
-    if not any_passed and len(variant_results) > 1:
-        reasons.append(f"不符合任一答案标准（共 {len(variant_results)} 个变体）")
+    if not any_passed and variant_count > 1:
+        reasons.append(f"不符合任一答案标准（共 {variant_count} 个变体）")
+    return reasons
+
+
+def check_case_keywords(
+    case: Dict[str, Any],
+    answer: str,
+    hit_rate_threshold: float = 0.8,
+) -> Dict[str, Any]:
+    """主标准 + alternatives 双答案/多答案判定。
+
+    任一变体通过即 keyword_pass=True；未通过时取综合得分最高的变体作为代表，
+    与旧 app.services.evaluator.evaluate_keywords 的行为保持一致。
+    """
+    question = str(case.get("question") or "")
+    variants = _build_variants(case)
+    variant_results = _evaluate_variants(answer, variants, question, hit_rate_threshold)
+    any_passed = any(item["passed"] for item in variant_results)
+    representative = _pick_representative(variant_results, any_passed)
+
+    mc_rep = representative["must_contain_result"]
+    mnc_rep = representative["must_not_contain_result"]
+    reasons = _build_variant_reasons(mc_rep, mnc_rep, any_passed, len(variant_results))
 
     return {
         "passed": any_passed,

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -254,21 +254,17 @@ def semantic_forbidden_batch_check(question: str, answer: str, keywords: List[st
     return list(keywords)
 
 
-def _evaluate_single_keyword_variant(
+def _evaluate_must_contain(
     answer: str,
     must_contain: List[str],
-    must_not_contain: List[str],
     match_mode: str,
-    question: str = "",
-    project_path: Optional[str] = None,
+    project_path: Optional[str],
 ) -> Dict[str, Any]:
-    """按单个答案标准（变体）执行关键词判定。"""
-    reasons = []
+    reasons: List[str] = []
     hit_count = 0
-    semantic_hit = []
-    miss = []
-
-    semantic_candidates = []
+    semantic_hit: List[str] = []
+    miss: List[str] = []
+    semantic_candidates: List[str] = []
     for kw in must_contain:
         if not kw:
             continue
@@ -297,9 +293,25 @@ def _evaluate_single_keyword_variant(
         contains_ok = hit_count >= 1
     else:
         contains_ok = hit_rate >= 0.75
+    return {
+        "contains_ok": contains_ok,
+        "hit_rate": hit_rate,
+        "hit_count": hit_count,
+        "semantic_hit": semantic_hit,
+        "miss": miss,
+        "reasons": reasons,
+    }
 
+
+def _evaluate_forbidden(
+    question: str,
+    answer: str,
+    must_not_contain: List[str],
+    project_path: Optional[str],
+) -> Tuple[List[str], List[str]]:
     # 禁止词：普通词裸词命中即违规；SEMANTIC_FORBIDDEN_KEYWORDS 里的词
     # 需要再问一次语义裁判，区分“简化标签式定性”与“复述原文设定”。
+    reasons: List[str] = []
     semantic_forbidden_candidates = [
         kw for kw in must_not_contain
         if kw and kw in SEMANTIC_FORBIDDEN_KEYWORDS and _strip_negation(answer or "", kw)
@@ -307,8 +319,7 @@ def _evaluate_single_keyword_variant(
     semantic_forbidden_violations = set(
         semantic_forbidden_batch_check(question, answer or "", semantic_forbidden_candidates, project_path)
     )
-
-    violations = []
+    violations: List[str] = []
     for kw in must_not_contain:
         if not kw or not _strip_negation(answer or "", kw):
             continue
@@ -317,17 +328,31 @@ def _evaluate_single_keyword_variant(
             continue
         violations.append(kw)
         reasons.append(f"出现禁止包含：{kw}")
+    return violations, reasons
 
+
+def _evaluate_single_keyword_variant(
+    answer: str,
+    must_contain: List[str],
+    must_not_contain: List[str],
+    match_mode: str,
+    question: str = "",
+    project_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """按单个答案标准（变体）执行关键词判定。"""
+    contains = _evaluate_must_contain(answer, must_contain, match_mode, project_path)
+    violations, forbidden_reasons = _evaluate_forbidden(question, answer, must_not_contain, project_path)
+    reasons = list(contains["reasons"]) + forbidden_reasons
     not_contains_ok = len(violations) == 0
-    passed = contains_ok and not_contains_ok
+    passed = bool(contains["contains_ok"] and not_contains_ok)
     return {
         "passed": passed,
-        "contains_ok": contains_ok,
+        "contains_ok": contains["contains_ok"],
         "not_contains_ok": not_contains_ok,
-        "hit_rate": round(hit_rate, 2),
-        "hit_count": hit_count,
-        "semantic_hit": semantic_hit,
-        "miss": miss,
+        "hit_rate": round(contains["hit_rate"], 2),
+        "hit_count": contains["hit_count"],
+        "semantic_hit": contains["semantic_hit"],
+        "miss": contains["miss"],
         "violations": violations,
         "reasons": reasons,
     }

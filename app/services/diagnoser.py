@@ -40,11 +40,7 @@ def _trace_summary(trace: Dict[str, Any]) -> str:
     return "\n".join(lines[:30])
 
 
-def diagnose_run_case(
-    run_id: str,
-    case_id: str,
-    project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
-) -> Dict[str, Any]:
+def _load_diagnosis_context(run_id: str, case_id: str, project_path: str) -> Dict[str, Any]:
     try:
         project_path = str(ensure_project_path(project_path))
     except ValueError as e:
@@ -57,43 +53,52 @@ def diagnose_run_case(
         raise ValueError("Case result not found")
 
     trace = get_trace(result.get("trace_id") or "") if result.get("trace_id") else None
-    question = result.get("question", "")
-    answer = result.get("answer", "")
     reasons = result.get("reasons", [])
-
-    missing_keywords = [r for r in reasons if "缺少必须包含" in r]
-    bad_keywords = [r for r in reasons if "出现禁止包含" in r]
-    prompt_compliance = check_prompt_compliance(trace, project_path) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"}
-    prompt_rule_excerpt = get_tool_requirement_excerpt(project_path)
     cases = list_test_cases()
     case_meta = next((c for c in cases if c["case_id"] == case_id), None)
-    alternatives = (case_meta or {}).get("alternatives", []) or []
+    return {
+        "run_id": run_id,
+        "case_id": case_id,
+        "project_path": project_path,
+        "result": result,
+        "trace": trace,
+        "question": result.get("question", ""),
+        "answer": result.get("answer", ""),
+        "reasons": reasons,
+        "missing_keywords": [r for r in reasons if "缺少必须包含" in r],
+        "bad_keywords": [r for r in reasons if "出现禁止包含" in r],
+        "prompt_compliance": check_prompt_compliance(trace, project_path) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"},
+        "prompt_rule_excerpt": get_tool_requirement_excerpt(project_path),
+        "alternatives": (case_meta or {}).get("alternatives", []) or [],
+    }
 
-    prompt = f"""你是一个 Agent 运行诊断专家。下面是一次知识库问答 Agent 的评测失败记录，请你阅读日志，找出根因。
+
+def _build_diagnosis_prompt(ctx: Dict[str, Any]) -> str:
+    return f"""你是一个 Agent 运行诊断专家。下面是一次知识库问答 Agent 的评测失败记录，请你阅读日志，找出根因。
 
 【用户问题】
-{question}
+{ctx["question"]}
 
 【AI 最终答案】
-{answer}
+{ctx["answer"]}
 
 【评测失败原因】
-{json.dumps(reasons, ensure_ascii=False)}
+{json.dumps(ctx["reasons"], ensure_ascii=False)}
 
 【需要关注的缺失/违规关键词】
-{json.dumps({"缺少必须包含": missing_keywords, "出现禁止包含": bad_keywords}, ensure_ascii=False)}
+{json.dumps({"缺少必须包含": ctx["missing_keywords"], "出现禁止包含": ctx["bad_keywords"]}, ensure_ascii=False)}
 
 【Trace 工具调用摘要】
-{_trace_summary(trace or {})}
+{_trace_summary(ctx["trace"] or {})}
 
 【本题目双答案/备选答案标准】
-{json.dumps(alternatives, ensure_ascii=False, indent=2)}
+{json.dumps(ctx["alternatives"], ensure_ascii=False, indent=2)}
 
 【系统提示词合规检查（只读挂载）】
-{json.dumps(prompt_compliance, ensure_ascii=False, indent=2)}
+{json.dumps(ctx["prompt_compliance"], ensure_ascii=False, indent=2)}
 
 【Agent 系统提示词工具规则（只读挂载，节选）】
-{prompt_rule_excerpt}
+{ctx["prompt_rule_excerpt"]}
 
 请输出 JSON（不要其他内容）：
 {{
@@ -104,6 +109,14 @@ def diagnose_run_case(
 }}
 """
 
+
+def _call_diagnosis_llm(
+    prompt: str,
+    project_path: str,
+    run_id: str,
+    case_id: str,
+    trace_id: str,
+) -> Dict[str, Any]:
     api_keys = _api_keys(project_path)
     if not api_keys:
         return {"error": "缺少 DASHSCOPE_API_KEY"}
@@ -138,14 +151,25 @@ def diagnose_run_case(
                 end = content.rfind("}") + 1
                 if start >= 0 and end > start:
                     diag = json.loads(content[start:end])
-                    save_diagnosis(run_id, case_id, result.get("trace_id") or "", diag, prompt)
+                    save_diagnosis(run_id, case_id, trace_id, diag, prompt)
                     diag["prompt"] = prompt
                     return diag
                 diag = {"root_cause": content, "evidence": [], "suggestion": "", "confidence": 0}
-                save_diagnosis(run_id, case_id, result.get("trace_id") or "", diag, prompt)
+                save_diagnosis(run_id, case_id, trace_id, diag, prompt)
                 diag["prompt"] = prompt
                 return diag
             errors.append(f"[{ep.get('source','?')}] HTTP {resp.status_code}")
         except Exception:
             errors.append(f"[{ep.get('source','?')}] 请求异常")
     return {"error": "LLM 调用失败: " + " | ".join(errors)}
+
+
+def diagnose_run_case(
+    run_id: str,
+    case_id: str,
+    project_path: str = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用",
+) -> Dict[str, Any]:
+    ctx = _load_diagnosis_context(run_id, case_id, project_path)
+    prompt = _build_diagnosis_prompt(ctx)
+    trace_id = ctx["result"].get("trace_id") or ""
+    return _call_diagnosis_llm(prompt, ctx["project_path"], run_id, case_id, trace_id)

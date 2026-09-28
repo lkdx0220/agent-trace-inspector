@@ -441,6 +441,59 @@ def _assertions_from_patterns(
     return assertions
 
 
+def _resolution_evidence_ids(
+    resolution: Dict[str, Any],
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+    extra_evidence: Optional[List[Dict[str, Any]]],
+) -> List[str]:
+    eids = [str(e) for e in (resolution.get("evidence_ids") or [])]
+    valid = evidence_ids(evidence_by_order, extra_evidence or [])
+    eids = [e for e in eids if e in valid]
+    if not eids:
+        eids = [oid for oid in evidence_by_order.keys() if any(e.get("ok") for e in evidence_by_order[oid])]
+    return eids
+
+
+def _build_resolution_prescription(
+    result: Dict[str, Any],
+    resolution: Dict[str, Any],
+    kind: str,
+    sheet: Dict[str, Any],
+    eids: List[str],
+) -> Dict[str, Any]:
+    return {
+        "issue": str(resolution.get("label") or "确定性归因"),
+        "root_cause": str(resolution.get("primary_root_cause") or ""),
+        "conclusion_kind": kind,
+        "fact_assertions": _assertions_from_patterns(kind, sheet),
+        "evidence_ids": eids,
+        "suggestion": str(resolution.get("suggestion_template") or "人工复核 8 阶段证据后确定修改方案。"),
+        "target_file": str(resolution.get("target_file") or ""),
+        "severity": "high" if kind not in {"version_unknown", "other"} else "medium",
+        "expected_effect": f"解决 {result.get('reasons') or result.get('case_id')} 对应的失败项",
+        "evidence_level": "L4" if eids else "L1",
+    }
+
+
+def _build_resolution_report(
+    resolution: Dict[str, Any],
+    kind: str,
+    eids: List[str],
+    prescription: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "diagnosis": {
+            "summary": str(resolution.get("label") or "确定性归因"),
+            "primary_root_cause": str(resolution.get("primary_root_cause") or ""),
+            "issue_classification": kind,
+            "key_evidence": eids,
+        },
+        "prescriptions": [prescription],
+        "confidence": 0.0,
+        "_note": "fallback_pipeline",
+    }
+
+
 def _fallback_resolution_report(
     result: Dict[str, Any],
     evidence_by_order: Dict[str, List[Dict[str, Any]]],
@@ -455,34 +508,9 @@ def _fallback_resolution_report(
     if kind in {"", "other"}:
         return None
     sheet = fact_sheet or {}
-    eids = [str(e) for e in (resolution.get("evidence_ids") or [])]
-    valid = evidence_ids(evidence_by_order, extra_evidence or [])
-    eids = [e for e in eids if e in valid]
-    if not eids:
-        eids = [oid for oid in evidence_by_order.keys() if any(e.get("ok") for e in evidence_by_order[oid])]
-    prescription = {
-        "issue": str(resolution.get("label") or "确定性归因"),
-        "root_cause": str(resolution.get("primary_root_cause") or ""),
-        "conclusion_kind": kind,
-        "fact_assertions": _assertions_from_patterns(kind, sheet),
-        "evidence_ids": eids,
-        "suggestion": str(resolution.get("suggestion_template") or "人工复核 8 阶段证据后确定修改方案。"),
-        "target_file": str(resolution.get("target_file") or ""),
-        "severity": "high" if kind not in {"version_unknown", "other"} else "medium",
-        "expected_effect": f"解决 {result.get('reasons') or result.get('case_id')} 对应的失败项",
-        "evidence_level": "L4" if eids else "L1",
-    }
-    return {
-        "diagnosis": {
-            "summary": str(resolution.get("label") or "确定性归因"),
-            "primary_root_cause": str(resolution.get("primary_root_cause") or ""),
-            "issue_classification": kind,
-            "key_evidence": eids,
-        },
-        "prescriptions": [prescription],
-        "confidence": 0.0,
-        "_note": "fallback_pipeline",
-    }
+    eids = _resolution_evidence_ids(resolution, evidence_by_order, extra_evidence)
+    prescription = _build_resolution_prescription(result, resolution, kind, sheet, eids)
+    return _build_resolution_report(resolution, kind, eids, prescription)
 
 
 def _fallback_trace_truth_prescription(oid: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -761,6 +789,85 @@ def _has_file_evidence(profile: Dict[str, Any], target: str = "") -> bool:
     return bool(cats & {"stage_routing", "stage_planning", "stage_tool_execution", "stage_knowledge_truth"})
 
 
+def _grounding_literal(
+    p: Dict[str, Any],
+    index: int,
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+    extra_evidence: List[Dict[str, Any]],
+    issues: List[str],
+) -> Optional[Tuple[str, List[str]]]:
+    eids = p.get("evidence_ids") or []
+    corpus = _evidence_corpus_for_ids(eids, evidence_by_order, extra_evidence)
+    if not corpus:
+        issues.append(f"prescriptions[{index}] 引用的 evidence_ids 没有对应证据内容")
+        return None
+    root = str(p.get("root_cause") or "")
+    terms = _meaningful_terms(root)
+    grounded = [t for t in terms if t.lower() in corpus.lower()]
+    if not grounded:
+        issues.append(
+            f"prescriptions[{index}] root_cause 没有任何字面证据支撑"
+            f"（引用 {eids}，候选术语 {terms[:8]}）"
+        )
+        return None
+    return root, eids
+
+
+def _grounding_rule_based(
+    root: str,
+    profile: Dict[str, Any],
+    index: int,
+    eids: List[str],
+    issues: List[str],
+) -> None:
+    # 规则/违规类结论：必须有当前提示词原文 + Trace 行为证据。
+    if not any(m in root for m in ("违反", "违规", "系统提示词", "提示词规则", "规则未落地", "P3")):
+        return
+    if not _has_prompt_rule_evidence(profile):
+        issues.append(
+            f"prescriptions[{index}] 包含“违反/提示词/规则”类根因，但 evidence_ids {eids} 没有 read_system_prompt 或 LO-003(prompt_rule) 证据"
+        )
+    if not _has_trace_level_evidence(profile):
+        issues.append(
+            f"prescriptions[{index}] 包含“违反/违规”类根因，但 evidence_ids {eids} 没有 Trace 级行为证据（LO-001/LO-002/LO-PR-01/LO-ZT-01）"
+        )
+
+
+def _grounding_kb_based(
+    root: str,
+    profile: Dict[str, Any],
+    index: int,
+    eids: List[str],
+    issues: List[str],
+) -> None:
+    # 知识库/召回类结论：必须有检索或缺失词探针证据。
+    if not any(m in root for m in ("知识库", "召回", "未召回", "切片", "查询词", "没搜到", "检索")):
+        return
+    if not _has_kb_probe_evidence(profile):
+        issues.append(
+            f"prescriptions[{index}] 提到知识库/召回/检索，但 evidence_ids {eids} 没有 missing_keyword/not_found_tool 或 search_knowledge_base/inspect_aliases 证据"
+        )
+
+
+def _grounding_file_based(
+    root: str,
+    p: Dict[str, Any],
+    profile: Dict[str, Any],
+    index: int,
+    eids: List[str],
+    issues: List[str],
+) -> None:
+    # 代码/文件行级结论：必须有读代码或 grep 证据。
+    target = str(p.get("target_file") or "")
+    markers = ("app/", "prompts/", "nodes.py", "query.py", "retrieval.py", "character_aliases.py", "行 ")
+    if not (target or any(m in root for m in markers)):
+        return
+    if not _has_file_evidence(profile, target):
+        issues.append(
+            f"prescriptions[{index}] 指向具体代码/文件，但 evidence_ids {eids} 没有 read_project_file / grep_project / read_system_prompt 证据"
+        )
+
+
 def _final_grounding_check(
     report: Dict[str, Any],
     evidence_by_order: Dict[str, List[Dict[str, Any]]],
@@ -776,50 +883,14 @@ def _final_grounding_check(
     issues: List[str] = []
     prescriptions = report.get("prescriptions") or []
     for i, p in enumerate(prescriptions):
-        eids = p.get("evidence_ids") or []
-        corpus = _evidence_corpus_for_ids(eids, evidence_by_order, extra_evidence)
-        if not corpus:
-            issues.append(f"prescriptions[{i}] 引用的 evidence_ids 没有对应证据内容")
+        literal = _grounding_literal(p, i, evidence_by_order, extra_evidence, issues)
+        if literal is None:
             continue
-
-        root = str(p.get("root_cause") or "")
-        terms = _meaningful_terms(root)
-        grounded = [t for t in terms if t.lower() in corpus.lower()]
-        if not grounded:
-            issues.append(
-                f"prescriptions[{i}] root_cause 没有任何字面证据支撑"
-                f"（引用 {eids}，候选术语 {terms[:8]}）"
-            )
-            continue
-
+        root, eids = literal
         profile = _evidence_type_profile(eids, evidence_by_order, extra_evidence)
-
-        # 规则/违规类结论：必须有当前提示词原文 + Trace 行为证据。
-        if any(m in root for m in ("违反", "违规", "系统提示词", "提示词规则", "规则未落地", "P3")):
-            if not _has_prompt_rule_evidence(profile):
-                issues.append(
-                    f"prescriptions[{i}] 包含“违反/提示词/规则”类根因，但 evidence_ids {eids} 没有 read_system_prompt 或 LO-003(prompt_rule) 证据"
-                )
-            if not _has_trace_level_evidence(profile):
-                issues.append(
-                    f"prescriptions[{i}] 包含“违反/违规”类根因，但 evidence_ids {eids} 没有 Trace 级行为证据（LO-001/LO-002/LO-PR-01/LO-ZT-01）"
-                )
-
-        # 知识库/召回类结论：必须有检索或缺失词探针证据。
-        if any(m in root for m in ("知识库", "召回", "未召回", "切片", "查询词", "没搜到", "检索")):
-            if not _has_kb_probe_evidence(profile):
-                issues.append(
-                    f"prescriptions[{i}] 提到知识库/召回/检索，但 evidence_ids {eids} 没有 missing_keyword/not_found_tool 或 search_knowledge_base/inspect_aliases 证据"
-                )
-
-        # 代码/文件行级结论：必须有读代码或 grep 证据。
-        target = str(p.get("target_file") or "")
-        if target or any(m in root for m in ("app/", "prompts/", "nodes.py", "query.py", "retrieval.py", "character_aliases.py", "行 ")):
-            if not _has_file_evidence(profile, target):
-                issues.append(
-                    f"prescriptions[{i}] 指向具体代码/文件，但 evidence_ids {eids} 没有 read_project_file / grep_project / read_system_prompt 证据"
-                )
-
+        _grounding_rule_based(root, profile, i, eids, issues)
+        _grounding_kb_based(root, profile, i, eids, issues)
+        _grounding_file_based(root, p, profile, i, eids, issues)
     return {"valid": not issues, "issues": issues}
 
 

@@ -98,16 +98,20 @@ def _render_summary_row(r: Dict) -> str:
     )
 
 
-def _render_detail_card(r: Dict) -> str:
-    qid = r["id"]
-    if "error" in r:
-        return f'<div class="card" id="{_esc(qid)}"><h3>{_esc(qid)}: {_esc(r.get("category",""))}</h3><p class="err">{_esc(r["error"])}</p></div>'
+def _render_card_meta(r: Dict) -> str:
+    time_meta = "{:.0f}s".format(r.get("elapsed", 0))
+    if r.get("init_seconds") is not None or r.get("agent_seconds") is not None:
+        time_meta += " (init {:.0f}s / agent {:.0f}s)".format(
+            float(r.get("init_seconds") or 0), float(r.get("agent_seconds") or 0)
+        )
+    judge_meta = "" if r.get("judge_valid") is not False else " | Judge不可用"
+    return f"""  <div class="meta">{_esc(r["category"])} | {_esc(r.get("difficulty",""))} | {_esc(time_meta)}{_esc(judge_meta)}
+    {f'| {_esc(r.get("tool_count",0))} 次工具调用' if r.get("tool_count") else ""}
+    {f'| {_esc(r.get("eval_mode",""))}' if r.get("eval_mode") == "manual" else ""}
+  </div>"""
 
-    ragas = r["ragas"]
-    mc = r["must_contain_result"]
-    mnc = r["must_not_contain_result"]
-    cite = r["citation_result"]
 
+def _render_ragas_section(r: Dict, ragas: Dict) -> str:
     judge_note = ""
     if r.get("judge_valid") is False:
         judge_note = f'<p class="err">Judge 不可用：{_esc("；".join(r.get("judge_errors") or []))}；该样本 RAGAS 分数无效。</p>'
@@ -121,24 +125,7 @@ def _render_detail_card(r: Dict) -> str:
             + _esc("、".join(flags))
             + f" 超出配置上限 {_esc(limits)}，该样本的 RAGAS 分数可能偏低。</p>"
         )
-
-    # 显式先切片再转义，避免后续重构时截断转义后的 HTML 实体。
-    ctx_excerpt = (r.get("contexts") or "（无）")[:5000]
-    time_meta = "{:.0f}s".format(r.get("elapsed", 0))
-    if r.get("init_seconds") is not None or r.get("agent_seconds") is not None:
-        time_meta += " (init {:.0f}s / agent {:.0f}s)".format(
-            float(r.get("init_seconds") or 0), float(r.get("agent_seconds") or 0)
-        )
-    judge_meta = "" if r.get("judge_valid") is not False else " | Judge不可用"
-    return f"""
-<div class="card" id="{_esc(qid)}">
-  <h3>{_esc(qid)}: {_esc(r["question"])}</h3>
-  <div class="meta">{_esc(r["category"])} | {_esc(r.get("difficulty",""))} | {_esc(time_meta)}{_esc(judge_meta)}
-    {f'| {_esc(r.get("tool_count",0))} 次工具调用' if r.get("tool_count") else ""}
-    {f'| {_esc(r.get("eval_mode",""))}' if r.get("eval_mode") == "manual" else ""}
-  </div>
-
-  <div class="section">
+    return f"""  <div class="section">
     <h4>RAGAS 评分</h4>
     {judge_note}
     {trunc_note}
@@ -148,9 +135,11 @@ def _render_detail_card(r: Dict) -> str:
       <tr><td>Context Precision（检索精度）</td><td>{_fmt_score(ragas.get("context_precision"))}/5</td><td>检索内容是否精准相关</td></tr>
       <tr><td>Context Recall（检索召回）</td><td>{_fmt_score(ragas.get("context_recall"))}/5</td><td>检索是否覆盖参考答案中的事实</td></tr>
     </table>
-  </div>
+  </div>"""
 
-  <div class="section">
+
+def _render_keyword_section(r: Dict, mc: Dict, mnc: Dict) -> str:
+    return f"""  <div class="section">
     <h4>关键词检查 {_dot(mc["passed"] and mnc["passed"])}</h4>
     <p><strong>must_contain</strong> ({_esc(r.get("match_mode","all"))}): 命中 {_esc("{}/{}".format(len(mc.get("hit", []) ) + len(mc.get("semantic_hit", [])), len(r.get("must_contain_keywords", []))))}
        {f' | 语义命中: {", ".join(_esc(x) for x in mc.get("semantic_hit",[]))}' if mc.get("semantic_hit") else ""}
@@ -158,16 +147,20 @@ def _render_detail_card(r: Dict) -> str:
     </p>
     <p><strong>must_not_contain</strong>: {f'违规: {", ".join(_esc(x) for x in mnc.get("violations",[]))}' if mnc.get("violations") else "未发现违规词"}
     </p>
-  </div>
+  </div>"""
 
-  <div class="section">
+
+def _render_citation_section(cite: Dict) -> str:
+    return f"""  <div class="section">
     <h4>引用核对 {_dot(cite.get("passed",True))}</h4>
     <p>共 {_esc(cite.get("total", 0))} 处引用，{_esc(cite.get("verified", 0))} 处验证通过
        {f' | 未验证: {", ".join(_esc(x) for x in cite.get("unverified",[]))}' if cite.get("unverified") else ""}
     </p>
-  </div>
+  </div>"""
 
-  <div class="section">
+
+def _render_text_sections(r: Dict, ctx_excerpt: str) -> str:
+    return f"""  <div class="section">
     <h4>AI 回答</h4>
     <div class="answer-text">{_esc_br(r["answer"])}</div>
   </div>
@@ -185,9 +178,25 @@ def _render_detail_card(r: Dict) -> str:
   <div class="manual-area">
     <h4>人工批注</h4>
     <textarea placeholder="在此记录人工审核意见..."></textarea>
-  </div>
-</div>"""
+  </div>"""
 
+
+def _render_detail_card(r: Dict) -> str:
+    qid = r["id"]
+    if "error" in r:
+        return f'<div class="card" id="{_esc(qid)}"><h3>{_esc(qid)}: {_esc(r.get("category",""))}</h3><p class="err">{_esc(r["error"])}</p></div>'
+
+    # 显式先切片再转义，避免后续重构时截断转义后的 HTML 实体。
+    ctx_excerpt = (r.get("contexts") or "（无）")[:5000]
+    return f"""
+<div class="card" id="{_esc(qid)}">
+  <h3>{_esc(qid)}: {_esc(r["question"])}</h3>
+{_render_card_meta(r)}
+{_render_ragas_section(r, r["ragas"])}
+{_render_keyword_section(r, r["must_contain_result"], r["must_not_contain_result"])}
+{_render_citation_section(r["citation_result"])}
+{_render_text_sections(r, ctx_excerpt)}
+</div>"""
 
 def generate_html(results: List[Dict], output_path: str, judge_model: str = "deepseek-chat"):
     """生成 HTML 评估报告"""

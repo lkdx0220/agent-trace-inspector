@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from evaluator.contract import AgentResult, AgentTimings
 from evaluator.manifest import RunManifest, sha256_text
@@ -100,21 +100,16 @@ def _child_env(workspace: str) -> Dict[str, str]:
     return env
 
 
-def run_case(
-    adapter_name: str,
-    case: Dict[str, Any],
-    workspace: str,
-    timeout_seconds: int = 300,
-    cwd: Optional[str] = None,
-) -> AgentResult:
-    """起一个内置 adapter 子进程跑单题；超时直接 kill。"""
+def _adapter_module(adapter_name: str) -> Optional[str]:
     if adapter_name == "genshin":
-        adapter_module = "evaluator.adapters.genshin"
-    elif adapter_name == "doctor":
-        adapter_module = "evaluator.adapters.doctor"
-    else:
-        return AgentResult(status="agent_error", error=f"未知 adapter: {adapter_name}", adapter=adapter_name)
-    payload = {
+        return "evaluator.adapters.genshin"
+    if adapter_name == "doctor":
+        return "evaluator.adapters.doctor"
+    return None
+
+
+def _build_adapter_payload(case: Dict[str, Any]) -> Dict[str, Any]:
+    return {
         "case_id": str(case.get("id") or ""),
         "question": str(case.get("question") or ""),
         "context": str(case.get("context") or ""),
@@ -123,20 +118,70 @@ def run_case(
         "project_path": str(case.get("project_path") or ""),
         "case": case,
     }
+
+
+def _run_adapter_process(
+    adapter_module: str,
+    payload: Dict[str, Any],
+    run_cwd: str,
+    workspace: str,
+    timeout_seconds: int,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", adapter_module],
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=int(timeout_seconds),
+        cwd=run_cwd,
+        env=_child_env(workspace),
+    )
+
+
+def _parse_adapter_stdout(raw: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    try:
+        data = json.loads(raw)
+        return (data if isinstance(data, dict) else {}), ""
+    except Exception:
+        lines = [line for line in raw.splitlines() if line.strip()]
+        try:
+            data = json.loads(lines[-1]) if lines else {}
+            return (data if isinstance(data, dict) else {}), ""
+        except Exception as exc:
+            return None, f"adapter stdout 不是合法 JSON: {type(exc).__name__}: {exc}"
+
+
+def _validate_adapter_result(result: AgentResult, adapter_name: str) -> Optional[AgentResult]:
+    issues = [item for item in result.validate() if not item.startswith("warning:")]
+    if not issues:
+        return result
+    return AgentResult(
+        status="agent_error",
+        error="adapter 结果校验失败: " + "；".join(issues),
+        adapter=result.adapter or adapter_name,
+        raw=result.raw,
+    )
+
+
+def run_case(
+    adapter_name: str,
+    case: Dict[str, Any],
+    workspace: str,
+    timeout_seconds: int = 300,
+    cwd: Optional[str] = None,
+) -> AgentResult:
+    """起一个内置 adapter 子进程跑单题；超时直接 kill。"""
+    adapter_module = _adapter_module(adapter_name)
+    if adapter_module is None:
+        return AgentResult(status="agent_error", error=f"未知 adapter: {adapter_name}", adapter=adapter_name)
+
+    payload = _build_adapter_payload(case)
     run_cwd = cwd or str(Path(__file__).resolve().parents[1])
     started = time.time()
     try:
-        proc = subprocess.run(
-            [sys.executable, "-m", adapter_module],
-            input=json.dumps(payload, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=int(timeout_seconds),
-            cwd=run_cwd,
-            env=_child_env(workspace),
-        )
+        proc = _run_adapter_process(adapter_module, payload, run_cwd, workspace, timeout_seconds)
     except subprocess.TimeoutExpired:
         return AgentResult(
             status="timeout",
@@ -152,30 +197,12 @@ def run_case(
             adapter=adapter_name,
         )
 
-    raw = (proc.stdout or "").strip()
-    try:
-        data = json.loads(raw)
-    except Exception:
-        lines = [line for line in raw.splitlines() if line.strip()]
-        try:
-            data = json.loads(lines[-1]) if lines else {}
-        except Exception as exc:
-            return AgentResult(
-                status="agent_error",
-                error=f"adapter stdout 不是合法 JSON: {type(exc).__name__}: {exc}",
-                adapter=adapter_name,
-            )
+    data, parse_error = _parse_adapter_stdout((proc.stdout or "").strip())
+    if data is None:
+        return AgentResult(status="agent_error", error=parse_error, adapter=adapter_name)
 
-    result = AgentResult.from_dict(data if isinstance(data, dict) else {})
-    issues = [item for item in result.validate() if not item.startswith("warning:")]
-    if issues:
-        return AgentResult(
-            status="agent_error",
-            error="adapter 结果校验失败: " + "；".join(issues),
-            adapter=result.adapter,
-            raw=result.raw,
-        )
-    return result
+    result = AgentResult.from_dict(data)
+    return _validate_adapter_result(result, adapter_name) or result
 
 
 def _median(values) -> Optional[float]:

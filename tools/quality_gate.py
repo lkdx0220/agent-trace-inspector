@@ -191,7 +191,8 @@ def check_radon() -> Dict[str, Any]:
                     current_keys.add(key)
                 hotspots.append((int(b.get("complexity") or 0), f"{path}:{b.get('lineno', '?')} {b.get('name', '')} rank={rank} cc={b.get('complexity')}"))
     hotspots.sort(reverse=True)
-    total_bad = sum(buckets.values())
+    # C 级（11-20）属于可接受范围，不作为 warning；只监控 D/E/F。
+    total_bad = buckets["D"] + buckets["E"] + buckets["F"]
 
     # 复杂度基线：允许已有 D/E/F 债务继续以 warning 暴露，但禁止新增。
     baseline_path = QUALITY_DIR / "radon_baseline.json"
@@ -207,7 +208,7 @@ def check_radon() -> Dict[str, Any]:
         summary = f"新增 {len(new_keys)} 个高复杂度函数（D/E/F）；当前 C={buckets['C']} D={buckets['D']} E={buckets['E']} F={buckets['F']}"
     else:
         status = "warn" if total_bad else "pass"
-        summary = f"C={buckets['C']} D={buckets['D']} E={buckets['E']} F={buckets['F']}（C 以上为高复杂度；已有债务不阻塞，新增才会 fail）"
+        summary = f"C={buckets['C']} D={buckets['D']} E={buckets['E']} F={buckets['F']}（只把 D/E/F 视为高复杂度债务；C 级不阻塞）"
     return {
         "name": "radon",
         "status": status,
