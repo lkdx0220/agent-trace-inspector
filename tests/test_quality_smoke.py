@@ -153,3 +153,19 @@ def test_audit_summary_plan_mismatch_and_short_circuit():
     assert "评测器一致性差异" in summary
     assert "not_found 工具" in summary
     assert "短路串" in summary
+
+
+def test_fact_sheet_routing_applier():
+    from app.services.diagnostic_pipeline import _empty_fact_sheet, _apply_fact_routing
+    sheet = _empty_fact_sheet("答案", None, {"actual_tools": ["hybrid_search"]})
+    assert sheet["actual_tools"] == ["hybrid_search"]
+    assert sheet["routing_event_seen"] is False
+    _apply_fact_routing(sheet, {
+        "route_event_seen": True,
+        "current_code_hard_rule_hit": True,
+        "current_code_required_tools": ["query_quest"],
+        "injected_tools": ["hybrid_search"],
+        "missing_required_tools": ["query_quest"],
+    })
+    assert sheet["routing_event_seen"] is True
+    assert sheet["routing_missing_required_tools"] == ["query_quest"]

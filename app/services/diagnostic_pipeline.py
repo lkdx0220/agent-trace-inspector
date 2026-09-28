@@ -513,30 +513,18 @@ def run_diagnostic_pipeline(
     }
 
 
-def build_fact_sheet(
-    ctx: Dict[str, Any],
-    evidence_by_order: Dict[str, List[Dict[str, Any]]],
-    extra_evidence: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """从 8 阶段证据独立重算 FactSheet。
-
-    该表是结论一致性闸门的唯一权威依据；LLM 不能通过文字改写它。
-    """
-    trace = ctx.get("trace")
-    result = ctx.get("result") or {}
-    answer = str(result.get("answer") or "")
-    audit = _trace_truth_audit(ctx)
-
-    sheet: Dict[str, Any] = {
+def _empty_fact_sheet(answer: str, trace: Optional[Dict[str, Any]], audit: Dict[str, Any]) -> Dict[str, Any]:
+    tool_count = len(collect_tool_spans(trace))
+    return {
         "answer": answer,
         "actual_tools": [str(x) for x in (audit.get("actual_tools") or [])],
-        "tool_count": len(collect_tool_spans(trace)),
+        "tool_count": tool_count,
         "plan_intents": [str(x) for x in (audit.get("plan_intents") or [])],
         "plan_tool_call_names_empty": not bool(audit.get("plan_tool_call_names")),
         "answer_short_circuit": bool(audit.get("answer_short_circuit")),
         "not_found_tools": audit.get("not_found_tools") or [],
         "evaluator_error_detected": bool(audit.get("evaluator_discrepancies")),
-        "zero_tool_no_skip": len(collect_tool_spans(trace)) == 0,
+        "zero_tool_no_skip": tool_count == 0,
         "prompt_trace_version_known": False,
         "trace_source_snapshot_known": False,
         "prompt_snapshot_clean": False,
@@ -557,6 +545,92 @@ def build_fact_sheet(
         "stage_summaries": {},
     }
 
+
+def _apply_fact_routing(sheet: Dict[str, Any], data: Dict[str, Any]) -> None:
+    sheet["routing_event_seen"] = bool(data.get("route_event_seen"))
+    sheet["routing_hard_rule_hit"] = bool(data.get("current_code_hard_rule_hit"))
+    sheet["routing_expected_tools"] = [str(x) for x in (data.get("current_code_required_tools") or [])]
+    sheet["routing_actual_tools"] = [str(x) for x in (data.get("injected_tools") or [])]
+    sheet["routing_missing_required_tools"] = [str(x) for x in (data.get("missing_required_tools") or [])]
+
+
+def _apply_fact_planning(sheet: Dict[str, Any], data: Dict[str, Any]) -> None:
+    sheet["plan_intents"] = [str(x) for x in (data.get("plan_intents") or [])]
+    sheet["plan_tool_call_names_empty"] = not bool(data.get("tool_call_names"))
+    skip = data.get("tool_skip_reason")
+    sheet["zero_tool_no_skip"] = sheet["zero_tool_no_skip"] and not bool(skip)
+
+
+def _apply_fact_tool_execution(sheet: Dict[str, Any], data: Dict[str, Any]) -> None:
+    sheet["not_found_tools"] = data.get("not_found_tools") or []
+
+
+def _apply_fact_knowledge_truth(sheet: Dict[str, Any], data: Dict[str, Any]) -> None:
+    for kw, r in (data.get("keyword_results") or {}).items():
+        where = r.get("where") or {}
+        sheet["tool_output_contains"][kw] = bool(where.get("tool_results"))
+        sheet["final_answer_contains"][kw] = bool(where.get("final_answer"))
+        sheet["kb_probe_contains"][kw] = bool(r.get("kb_hit"))
+        sheet["raw_data_contains"][kw] = bool(r.get("raw_contains"))
+    for kw, r in (data.get("forbidden_results") or {}).items():
+        where = r.get("where") or {}
+        sheet["tool_output_contains"][kw] = bool(where.get("tool_results"))
+        sheet["final_answer_contains"][kw] = bool(where.get("final_answer"))
+        sheet["raw_data_contains"][kw] = bool(r.get("raw_contains"))
+        if r.get("prompt_current_contains"):
+            sheet["prompt_current_contains"][kw] = True
+        if where.get("final_answer") and (where.get("tool_results") or r.get("prompt_current_contains")):
+            sheet["contamination_source_found"] = True
+    for item in (data.get("not_found_results") or []):
+        term = str(item.get("term") or "")
+        if not term:
+            continue
+        sheet["alias_map_contains"][term] = bool(item.get("alias_canonical")) or len(item.get("alias_variants") or []) > 1
+        sheet["raw_data_contains"][term] = bool(item.get("raw_contains"))
+
+
+def _apply_fact_answer(sheet: Dict[str, Any], data: Dict[str, Any]) -> None:
+    sheet["answer_short_circuit"] = bool(data.get("short_circuit_pattern"))
+
+
+def _apply_fact_version(sheet: Dict[str, Any], data: Dict[str, Any]) -> None:
+    sheet["trace_source_snapshot_known"] = bool(data.get("trace_snapshot_known"))
+    sheet["prompt_snapshot_clean"] = bool(data.get("prompt_clean"))
+    sheet["code_snapshot_clean"] = bool(data.get("code_clean"))
+    sheet["trace_version_clean"] = bool(data.get("all_clean"))
+    sheet["prompt_trace_version_known"] = bool(data.get("trace_snapshot_known") and data.get("prompt_clean"))
+
+
+def _apply_fact_evaluator(sheet: Dict[str, Any], data: Dict[str, Any]) -> None:
+    sheet["evaluator_error_detected"] = bool((data.get("audit") or {}).get("evaluator_discrepancies"))
+
+
+_FACT_APPLIERS = {
+    "stage_routing": _apply_fact_routing,
+    "stage_planning": _apply_fact_planning,
+    "stage_tool_execution": _apply_fact_tool_execution,
+    "stage_knowledge_truth": _apply_fact_knowledge_truth,
+    "stage_answer": _apply_fact_answer,
+    "stage_version": _apply_fact_version,
+    "stage_evaluator": _apply_fact_evaluator,
+}
+
+
+def build_fact_sheet(
+    ctx: Dict[str, Any],
+    evidence_by_order: Dict[str, List[Dict[str, Any]]],
+    extra_evidence: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """从 8 阶段证据独立重算 FactSheet。
+
+    该表是结论一致性闸门的唯一权威依据；LLM 不能通过文字改写它。
+    """
+    trace = ctx.get("trace")
+    result = ctx.get("result") or {}
+    answer = str(result.get("answer") or "")
+    audit = _trace_truth_audit(ctx)
+    sheet = _empty_fact_sheet(answer, trace, audit)
+
     for oid, evs in evidence_by_order.items():
         for ev in evs:
             if not ev.get("ok"):
@@ -564,64 +638,14 @@ def build_fact_sheet(
             cat = ev.get("category") or ""
             data = ev.get("data") or {}
             sheet["stage_summaries"][oid] = ev.get("summary") or ""
-
-            if cat == "stage_routing":
-                sheet["routing_event_seen"] = bool(data.get("route_event_seen"))
-                sheet["routing_hard_rule_hit"] = bool(data.get("current_code_hard_rule_hit"))
-                sheet["routing_expected_tools"] = [str(x) for x in (data.get("current_code_required_tools") or [])]
-                sheet["routing_actual_tools"] = [str(x) for x in (data.get("injected_tools") or [])]
-                sheet["routing_missing_required_tools"] = [str(x) for x in (data.get("missing_required_tools") or [])]
-
-            elif cat == "stage_planning":
-                sheet["plan_intents"] = [str(x) for x in (data.get("plan_intents") or [])]
-                sheet["plan_tool_call_names_empty"] = not bool(data.get("tool_call_names"))
-                skip = data.get("tool_skip_reason")
-                sheet["zero_tool_no_skip"] = sheet["zero_tool_no_skip"] and not bool(skip)
-
-            elif cat == "stage_tool_execution":
-                sheet["not_found_tools"] = data.get("not_found_tools") or []
-
-            elif cat == "stage_knowledge_truth":
-                for kw, r in (data.get("keyword_results") or {}).items():
-                    where = r.get("where") or {}
-                    sheet["tool_output_contains"][kw] = bool(where.get("tool_results"))
-                    sheet["final_answer_contains"][kw] = bool(where.get("final_answer"))
-                    sheet["kb_probe_contains"][kw] = bool(r.get("kb_hit"))
-                    sheet["raw_data_contains"][kw] = bool(r.get("raw_contains"))
-                for kw, r in (data.get("forbidden_results") or {}).items():
-                    where = r.get("where") or {}
-                    sheet["tool_output_contains"][kw] = bool(where.get("tool_results"))
-                    sheet["final_answer_contains"][kw] = bool(where.get("final_answer"))
-                    sheet["raw_data_contains"][kw] = bool(r.get("raw_contains"))
-                    if r.get("prompt_current_contains"):
-                        sheet["prompt_current_contains"][kw] = True
-                    if where.get("final_answer") and (where.get("tool_results") or r.get("prompt_current_contains")):
-                        sheet["contamination_source_found"] = True
-                for item in (data.get("not_found_results") or []):
-                    term = str(item.get("term") or "")
-                    if not term:
-                        continue
-                    sheet["alias_map_contains"][term] = bool(item.get("alias_canonical")) or len(item.get("alias_variants") or []) > 1
-                    sheet["raw_data_contains"][term] = bool(item.get("raw_contains"))
-
-            elif cat == "stage_answer":
-                sheet["answer_short_circuit"] = bool(data.get("short_circuit_pattern"))
-
-            elif cat == "stage_version":
-                sheet["trace_source_snapshot_known"] = bool(data.get("trace_snapshot_known"))
-                sheet["prompt_snapshot_clean"] = bool(data.get("prompt_clean"))
-                sheet["code_snapshot_clean"] = bool(data.get("code_clean"))
-                sheet["trace_version_clean"] = bool(data.get("all_clean"))
-                sheet["prompt_trace_version_known"] = bool(data.get("trace_snapshot_known") and data.get("prompt_clean"))
-
-            elif cat == "stage_evaluator":
-                sheet["evaluator_error_detected"] = bool((data.get("audit") or {}).get("evaluator_discrepancies"))
+            applier = _FACT_APPLIERS.get(cat)
+            if applier is not None:
+                applier(sheet, data)
 
     # 兜底：用实际工具与评测结果补齐事实。
     if not sheet["actual_tools"]:
         sheet["actual_tools"] = [str(x) for x in (result.get("actual_tools") or [])]
     return sheet
-
 
 def _missing_keywords(sheet: Dict[str, Any], must_contain: List[str]) -> List[str]:
     missing: List[str] = []
