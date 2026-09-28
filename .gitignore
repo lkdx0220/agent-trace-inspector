@@ -25,3 +25,5 @@ venv/
 coverage.json
 pytest-cache-files-*
 
+# 测评集只在本地保留，不推送 GitHub
+/evalset/genshin/
