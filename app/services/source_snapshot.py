@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.config import SNAPSHOT_GIT_TIMEOUT_SECONDS
 from app.services.path_guard import ensure_project_path
 from app.services.subprocess_env import build_child_env
 
@@ -65,7 +66,7 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
             cwd=str(project_path),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=SNAPSHOT_GIT_TIMEOUT_SECONDS,
             env=build_child_env(),
         )
         if r.returncode == 0:
@@ -78,7 +79,7 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
             cwd=str(project_path),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=SNAPSHOT_GIT_TIMEOUT_SECONDS,
             env=build_child_env(),
         )
         if r.returncode == 0:

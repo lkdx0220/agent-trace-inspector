@@ -25,10 +25,16 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "harness": {
         "concurrency": 4,
         "timeout_seconds": 300,
+        "default_timeouts": {"genshin": 300, "doctor": 900},
+        "max_agent_repeat": 9,
         "runs_dir": "runs",
     },
     "judge": {
         "model": "deepseek-chat",
+        "timeout_seconds": 60,
+        "base_url": "https://api.deepseek.com/v1/chat/completions",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "scorer_version": "evaluator-phase2-1.0",
         "params": {
             "temperature": 0,
             "max_tokens": 512,

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-DEFAULT_PROJECT_PATH = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
+from app.config import DEFAULT_PROJECT_PATH
 
 # 可扩展白名单；当前仅允许原项目本体。
 ALLOWED_PROJECT_PATHS: List[Path] = [

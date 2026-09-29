@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Tuple
 
 import requests
 
+from app.config import REPORT_LLM_TIMEOUT_SECONDS, REPORT_MODEL
 from app.db import get_trace
 from app.services.diagnoser import _trace_summary
 from app.services.eval_store import get_run, save_report
@@ -237,7 +238,7 @@ def _call_report_llm(prompt: str, project_path: str, run_id: str, case_id: str) 
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "qwen3.7-max",
+                    "model": REPORT_MODEL,
                     "messages": [
                         {
                             "role": "system",
@@ -247,7 +248,7 @@ def _call_report_llm(prompt: str, project_path: str, run_id: str, case_id: str) 
                     ],
                     "temperature": 0.1,
                 },
-                timeout=180,
+                timeout=REPORT_LLM_TIMEOUT_SECONDS,
             )
             if resp.status_code == 200:
                 report_text = resp.json()["choices"][0]["message"]["content"].strip()

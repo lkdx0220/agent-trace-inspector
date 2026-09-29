@@ -12,7 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_PROJECT_PATH = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
+from app.config import DEFAULT_PROJECT_PATH
+
 PLAN_PROMPT_REL = Path("prompts/system/agent_system_v4_plan.txt")
 ANSWER_PROMPT_REL = Path("prompts/system/agent_system_v4_answer.txt")
 

@@ -37,7 +37,8 @@ _INSPECTOR_DIR = str(Path(__file__).resolve().parents[2])
 if _INSPECTOR_DIR not in sys.path:
     sys.path.insert(0, _INSPECTOR_DIR)
 
-DEFAULT_PROJECT_PATH = r"C:\Users\24701\Desktop\原神剧情\CASE-原神剧情助手-修改用"
+_DEFAULT_PROJECT_DIR = Path(_INSPECTOR_DIR).parent / "CASE-原神剧情助手-修改用"
+DEFAULT_PROJECT_PATH = os.environ.get("DOCTOR_PROJECT_PATH") or str(_DEFAULT_PROJECT_DIR)
 
 
 def _compose_answer(doctor: Dict[str, Any]) -> str:

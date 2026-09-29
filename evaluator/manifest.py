@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 MANIFEST_VERSION = "1.0"
+MANIFEST_GIT_TIMEOUT_SECONDS = 15
 
 
 def sha256_text(text: str) -> str:
@@ -43,7 +44,7 @@ def _git_commit(cwd: str | Path) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=15,
+            timeout=MANIFEST_GIT_TIMEOUT_SECONDS,
         )
     except (subprocess.SubprocessError, OSError):
         return ""
@@ -60,7 +61,7 @@ def _git_status_porcelain(cwd: str | Path) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=15,
+            timeout=MANIFEST_GIT_TIMEOUT_SECONDS,
         )
     except (subprocess.SubprocessError, OSError):
         return ""

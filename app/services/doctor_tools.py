@@ -18,6 +18,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.config import (
+    DEFAULT_PROJECT_PATH,
+    DOCTOR_GIT_TIMEOUT_SECONDS,
+    DOCTOR_MAX_FILE_CHARS,
+    DOCTOR_MAX_GREP_HITS,
+)
 from app.services.path_guard import ensure_project_path
 from app.services.subprocess_env import build_child_env
 from app.services.system_prompts import (
@@ -27,10 +33,7 @@ from app.services.system_prompts import (
 )
 
 INSPECTOR_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_PROJECT_PATH = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "data", "logs"}
-MAX_FILE_CHARS = 30000
-MAX_GREP_HITS = 50
 
 
 def now_iso() -> str:
@@ -535,8 +538,8 @@ def read_project_file(project_path: str, rel_path: str, start_line: int = 1, end
         "line_start": start,
         "line_end": end,
         "total_lines": len(lines),
-        "content": body[:MAX_FILE_CHARS],
-        "truncated": len(body) > MAX_FILE_CHARS,
+        "content": body[:DOCTOR_MAX_FILE_CHARS],
+        "truncated": len(body) > DOCTOR_MAX_FILE_CHARS,
     }
 
 
@@ -579,7 +582,7 @@ def grep_project(project_path: str, pattern: str, rel_path: str = "") -> Dict[st
                     except ValueError:
                         rel = str(p)
                     hits.append({"path": rel, "line": i, "content": line.strip()[:200]})
-                    if len(hits) >= MAX_GREP_HITS:
+                    if len(hits) >= DOCTOR_MAX_GREP_HITS:
                         return {"ok": True, "pattern": pattern, "hits": hits, "truncated": True}
     return {"ok": True, "pattern": pattern, "hits": hits, "truncated": False}
 
@@ -594,7 +597,7 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
             ["git", "-C", str(root), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=DOCTOR_GIT_TIMEOUT_SECONDS,
             env=build_child_env(),
         )
         if r.returncode == 0:
@@ -606,7 +609,7 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
             ["git", "-C", str(root), "status", "--porcelain"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=DOCTOR_GIT_TIMEOUT_SECONDS,
             env=build_child_env(),
         )
         if r.returncode == 0:

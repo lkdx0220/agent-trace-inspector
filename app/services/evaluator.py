@@ -16,6 +16,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from app.config import (
+    APP_KEYWORD_HIT_RATE_THRESHOLD,
+    DEEPSEEK_CHAT_URL,
+    SEMANTIC_JUDGE_MODEL,
+    SEMANTIC_JUDGE_TIMEOUT_SECONDS,
+)
 from app.services.path_guard import DEFAULT_PROJECT_PATH
 from app.services.qwen_client import get_deepseek_api_key, is_allowed_llm_endpoint
 from app.services.system_prompts import get_plan_system_prompt
@@ -106,10 +112,6 @@ SEMANTIC_FORBIDDEN_KEYWORDS = {
 }
 
 
-SEMANTIC_JUDGE_MODEL = "deepseek-flash"
-DEEPSEEK_CHAT_URL = "https://api.deepseek.com/v1/chat/completions"
-
-
 def _deepseek_key(project_path: Optional[str] = None) -> str:
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     if key:
@@ -176,7 +178,7 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str], project_path:
                 DEEPSEEK_CHAT_URL,
                 headers=headers,
                 json=payload,
-                timeout=60,
+                timeout=SEMANTIC_JUDGE_TIMEOUT_SECONDS,
             )
             if resp.status_code != 200:
                 continue
@@ -258,7 +260,7 @@ def semantic_forbidden_batch_check(
                 DEEPSEEK_CHAT_URL,
                 headers=headers,
                 json=payload,
-                timeout=60,
+                timeout=SEMANTIC_JUDGE_TIMEOUT_SECONDS,
             )
             if resp.status_code != 200:
                 continue
@@ -320,7 +322,7 @@ def _evaluate_must_contain(
     if match_mode == "any":
         contains_ok = hit_count >= 1
     else:
-        contains_ok = hit_rate >= 0.75
+        contains_ok = hit_rate >= APP_KEYWORD_HIT_RATE_THRESHOLD
     return {
         "contains_ok": contains_ok,
         "hit_rate": hit_rate,

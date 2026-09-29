@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from app.config import DIAGNOSIS_LLM_TIMEOUT_SECONDS, DIAGNOSIS_MODEL
 from app.db import get_trace
 from app.services.eval_store import get_run, list_test_cases, save_diagnosis
 from app.services.evaluator import check_prompt_compliance
@@ -141,14 +142,14 @@ def _call_diagnosis_llm(
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "qwen3.7-max",
+                    "model": DIAGNOSIS_MODEL,
                     "messages": [
                         {"role": "system", "content": "你是严格的 Agent 运行诊断助手，只输出 JSON。"},
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.1,
                 },
-                timeout=120,
+                timeout=DIAGNOSIS_LLM_TIMEOUT_SECONDS,
             )
             if resp.status_code == 200:
                 content = resp.json()["choices"][0]["message"]["content"]

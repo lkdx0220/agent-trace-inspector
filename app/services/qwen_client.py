@@ -19,7 +19,6 @@ from urllib.parse import urlparse
 from app.services.path_guard import ensure_project_path
 
 INSPECTOR_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_PROJECT_PATH = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
 
 QWEN_PRIMARY_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 QWEN_FALLBACK_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"

@@ -14,9 +14,8 @@ import ast
 from pathlib import Path
 from typing import Any, Dict, List
 
+from app.config import DEFAULT_PROJECT_PATH
 from app.services.path_guard import ensure_project_path
-
-DEFAULT_PROJECT_PATH = "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
 
 # 医生常备地图：只索引这些文件，不索引知识库数据文件
 MAP_FILES: Dict[str, str] = {

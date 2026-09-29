@@ -15,13 +15,19 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from app.config import (
+    DEFAULT_PROJECT_PATH,
+    DOCTOR_LLM_TIMEOUT_SECONDS,
+    DOCTOR_MAX_LLM_TURNS,
+    DOCTOR_MAX_TOOL_CONTENT_CHARS,
+    DOCTOR_MODEL,
+)
 from app.db import get_trace
 from app.services.coverage_gate import coverage_status, evidence_ids, validate_prescriptions
 from app.services.diagnostic_pipeline import (
@@ -37,7 +43,6 @@ from app.services.diagnostic_pipeline import (
     run_diagnostic_pipeline,
 )
 from app.services.doctor_tools import (
-    DEFAULT_PROJECT_PATH,
     dispatch_llm_tool,
     kb_probe_contains,
     llm_tool_definitions,
@@ -49,10 +54,6 @@ from app.services.path_guard import ensure_project_path
 from app.services.project_map import format_project_map, generate_project_map
 from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint
 from app.services.source_snapshot import trace_snapshot_status
-
-DOCTOR_MODEL = os.environ.get("DOCTOR_MODEL", "qwen3.7-max")
-MAX_LLM_TURNS = 20
-MAX_TOOL_CONTENT_CHARS = 6000
 
 
 def _api_keys(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -273,7 +274,7 @@ def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpo
                     "Content-Type": "application/json",
                 },
                 json=payload,
-                timeout=300,
+                timeout=DOCTOR_LLM_TIMEOUT_SECONDS,
             )
             if resp.status_code == 200:
                 return resp.json()
@@ -283,7 +284,7 @@ def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpo
     raise RuntimeError(f"LLM 调用失败（尝试了 {len(eps)} 个接口）: {' | '.join(errors)}")
 
 
-def _tool_content(result: Dict[str, Any], max_chars: int = MAX_TOOL_CONTENT_CHARS) -> str:
+def _tool_content(result: Dict[str, Any], max_chars: int = DOCTOR_MAX_TOOL_CONTENT_CHARS) -> str:
     """VulnClaw 式高信号 preview：上下文只放摘要/关键行，完整 raw 保留在证据库。"""
     text = json.dumps(result, ensure_ascii=False, indent=2)
     if len(text) <= max_chars:
@@ -1616,7 +1617,7 @@ def prescribe_run_case(
     ]
     final_report: Optional[Dict[str, Any]] = None
 
-    for turn in range(1, MAX_LLM_TURNS + 1):
+    for turn in range(1, DOCTOR_MAX_LLM_TURNS + 1):
         # 每轮把最新 Verified Claims / Pinned Facts 刷入系统提示词，保持长期记忆。
         messages[0]["content"] = _build_system_prompt(ctx)
         try:

@@ -96,11 +96,11 @@ def _build_judge_settings(
     workspace: str,
     cache_path: Path,
 ) -> Tuple[Any, str, int, float]:
-    default_timeout = 900 if args.adapter == "doctor" else 300
+    default_timeout = int(evaluator_config.config_value(config, f"harness.default_timeouts.{args.adapter}", 300))
     configured_timeout = evaluator_config.config_value(config, "harness.timeout_seconds", None)
     timeout_seconds = args.timeout or max(int(configured_timeout or 0), default_timeout)
     judge_model = args.judge_model or str(evaluator_config.config_value(config, "judge.model", "deepseek-chat"))
-    scorer_version = "evaluator-phase2-1.0"
+    scorer_version = str(evaluator_config.config_value(config, "judge.scorer_version", "evaluator-phase2-1.0"))
     hit_rate_threshold = float(
         evaluator_config.config_value(config, "scoring.must_contain_default_hit_rate", 0.8) or 0.8
     )
@@ -110,10 +110,15 @@ def _build_judge_settings(
         max_tokens=int(evaluator_config.config_value(config, "judge.params.max_tokens", 512) or 512),
         thinking=str(evaluator_config.config_value(config, "judge.params.thinking", "disabled") or "disabled"),
         contexts_chars=int(evaluator_config.config_value(config, "judge.window.contexts_chars", 60000) or 60000),
-        answer_chars=int(evaluator_config.config_value(config, "judge.window.answer_chars", 20000) or 20000),
+        answer_chars=int(evaluator_config.config_value(config, "judge.window.answer_chars", 40000) or 40000),
         reference_chars=int(evaluator_config.config_value(config, "judge.window.reference_chars", 20000) or 20000),
         repeat=max(1, int(evaluator_config.config_value(config, "judge.repeat", 2) or 2)),
         scorer_version=scorer_version,
+        base_url=str(
+            evaluator_config.config_value(config, "judge.base_url", "https://api.deepseek.com/v1/chat/completions")
+        ),
+        api_key_env=str(evaluator_config.config_value(config, "judge.api_key_env", "DEEPSEEK_API_KEY")),
+        timeout_seconds=int(evaluator_config.config_value(config, "judge.timeout_seconds", 60) or 60),
         workspace=workspace,
         cache_path=str(cache_path),
     )

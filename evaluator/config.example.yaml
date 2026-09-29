@@ -5,6 +5,12 @@ schema_version: "1.0"
 harness:
   concurrency: 4
   timeout_seconds: 300
+  # 各 adapter 的默认单题超时（秒）
+  default_timeouts:
+    genshin: 300
+    doctor: 900
+  # 单题重复上限：题集里的 agent_repeat 是数据，不能决定资源消耗
+  max_agent_repeat: 9
   runs_dir: runs
 
 adapter:
@@ -17,6 +23,10 @@ adapter:
 judge:
   # 推理模型不要当 judge：reasoning 会吃掉 max_tokens，导致 content 为空
   model: deepseek-chat
+  timeout_seconds: 60
+  base_url: https://api.deepseek.com/v1/chat/completions
+  api_key_env: DEEPSEEK_API_KEY
+  scorer_version: evaluator-phase2-1.0
   params:
     temperature: 0
     max_tokens: 512

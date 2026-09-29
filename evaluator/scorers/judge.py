@@ -24,6 +24,8 @@ except Exception:  # pragma: no cover
     dotenv_values = None  # type: ignore[assignment]
 
 
+# 这些是独立使用 JudgeSettings() 时的兜底默认值；运行期实际参数以
+# evaluator/config.py 读取的 config.yaml / config.example.yaml 为准。
 @dataclass
 class JudgeSettings:
     model: str = "deepseek-chat"
@@ -37,6 +39,7 @@ class JudgeSettings:
     scorer_version: str = "evaluator-phase2-1.0"
     base_url: str = "https://api.deepseek.com/v1/chat/completions"
     api_key_env: str = "DEEPSEEK_API_KEY"
+    timeout_seconds: int = 60
     workspace: str = ""
     cache_path: str = ""
 
@@ -284,7 +287,7 @@ def _call_judge_once(prompt: str, max_tokens: Optional[int] = None, attempt: int
                 "temperature": settings.temperature,
                 "max_tokens": limit,
             },
-            timeout=60,
+            timeout=settings.timeout_seconds,
             allow_redirects=False,
             verify=True,
         )

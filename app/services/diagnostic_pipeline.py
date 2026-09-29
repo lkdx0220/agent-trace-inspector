@@ -18,8 +18,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.config import DEFAULT_PROJECT_PATH
 from app.services.doctor_tools import (
-    DEFAULT_PROJECT_PATH,
     _events,
     _extract_plan_tool_intents,
     _find_where,

@@ -5,8 +5,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.config import DEFAULT_PROJECT_PATH
 from app.services.auth import require_local_or_token
-from app.services.doctor_tools import DEFAULT_PROJECT_PATH
 from app.services.eval_store import get_prescription, save_prescription
 from app.services.path_guard import ensure_project_path
 from app.services.project_doctor import prescribe_run_case

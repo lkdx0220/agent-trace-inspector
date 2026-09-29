@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from app.config import AUDIT_LLM_TIMEOUT_SECONDS, AUDIT_MODEL, DEEPSEEK_CHAT_URL
 from app.services.doctor_tools import _short_circuit_answer
 from app.services.eval_store import (
     get_case_audit,
@@ -25,10 +26,6 @@ from app.services.eval_store import (
 )
 from app.services.evaluator import _deepseek_key
 from app.services.qwen_client import is_allowed_llm_endpoint
-
-AUDIT_MODEL = "deepseek-flash"
-AUDIT_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
-LLM_TIMEOUT = 60
 
 
 def _ngrams(text: str, n: int = 4) -> set:
@@ -93,7 +90,7 @@ def _llm_audit(question: str, answer: str, reference: str) -> Optional[Dict[str,
     key = _deepseek_key()
     if not key:
         return None
-    if not is_allowed_llm_endpoint(AUDIT_ENDPOINT):
+    if not is_allowed_llm_endpoint(DEEPSEEK_CHAT_URL):
         return None
     prompt = f"""你是答案一致性轻量评审。请比较【实际答案】与【参考答案】，判断实际答案是否真的覆盖了参考答案的核心内容。
 
@@ -129,10 +126,10 @@ def _llm_audit(question: str, answer: str, reference: str) -> Optional[Dict[str,
     for payload in payloads:
         try:
             resp = requests.post(
-                AUDIT_ENDPOINT,
+                DEEPSEEK_CHAT_URL,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json=payload,
-                timeout=LLM_TIMEOUT,
+                timeout=AUDIT_LLM_TIMEOUT_SECONDS,
             )
             if resp.status_code != 200:
                 continue
