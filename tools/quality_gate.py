@@ -100,8 +100,7 @@ def _first_lines(text: str, limit: int = 8) -> List[str]:
 # ---------------------------------------------------------------
 
 def check_ruff() -> Dict[str, Any]:
-    config = QUALITY_DIR / "ruff.toml"
-    cmd = _py_module("ruff") + ["check", "--config", str(config), "--output-format", "json"] + TARGETS
+    cmd = _py_module("ruff") + ["check", "--output-format", "json"] + TARGETS
     r = _run(cmd)
     issues: List[Dict[str, Any]] = []
     if r["returncode"] not in (0, 1):
@@ -139,9 +138,7 @@ MYPY_ERR_RE = re.compile(r": error: ")
 
 
 def check_mypy() -> Dict[str, Any]:
-    config = QUALITY_DIR / "mypy.ini"
     cmd = _py_module("mypy") + [
-        "--config-file", str(config),
         "--show-error-codes",
         "--no-error-summary",
         "--explicit-package-bases",

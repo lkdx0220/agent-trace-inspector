@@ -1,0 +1,41 @@
+# 统一工具配置入口：ruff / mypy / pytest 都从这里读取。
+# 说明：运行期依赖仍以 requirements.txt 为准；这里只放工程规范配置。
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+extend-exclude = [
+  ".venv",
+  "__pycache__",
+  "data",
+  "runs",
+  "quality/reports",
+]
+
+[tool.ruff.lint]
+# 高信号规则：E9=语法级错误，F=pyflakes，B=bugbear，I=导入排序。
+select = ["E9", "F", "B", "I"]
+ignore = [
+  "E501",   # 行长交给 formatter，不在 lint 里卡
+  "B008",   # FastAPI Depends 默认参数是正常写法
+  "B904",   # raise ... from 需要逐个判断，先不强制
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+follow_imports = "silent"
+check_untyped_defs = false
+disallow_untyped_defs = false
+no_implicit_optional = false
+warn_return_any = false
+warn_unused_ignores = false
+show_error_codes = true
+exclude = '(^|/)(\.venv|__pycache__|data|runs|quality)/'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
