@@ -21,14 +21,18 @@ RESULT_SCHEMA_VERSION = "3"
 MAX_AGENT_REPEAT = 9  # 重复次数上限：题集里的 agent_repeat 是数据，不能让数据决定资源消耗
 
 
-def _resolve_repeat(case: Dict[str, Any], repeat_override: int = 0) -> int:
+def _resolve_repeat(
+    case: Dict[str, Any],
+    repeat_override: int = 0,
+    max_repeat: int = MAX_AGENT_REPEAT,
+) -> int:
     """取每题重复次数：显式覆盖 > case.agent_repeat > 1；非法值回退 1，并夹到上限。"""
     raw = repeat_override or case.get("agent_repeat") or 1
     try:
         value = int(raw)
     except (TypeError, ValueError):
         return 1
-    return max(1, min(value, MAX_AGENT_REPEAT))
+    return max(1, min(value, max_repeat))
 
 
 def _safe_qid(qid: Any, index: int) -> str:
@@ -339,6 +343,7 @@ def run_evalset(
     force: bool = False,
     hit_rate_threshold: float = 0.8,
     repeat_override: int = 0,
+    max_agent_repeat: int = MAX_AGENT_REPEAT,
 ) -> List[Dict[str, Any]]:
     """跑完整题集：子进程 adapter + 打分 + 每题落盘 + manifest 更新。"""
     out_dir = Path(results_dir)
@@ -366,7 +371,7 @@ def run_evalset(
                     print(f"[{index}/{len(cases)}] {qid} 缓存命中", flush=True)
                     continue
 
-        repeat = _resolve_repeat(case, repeat_override)
+        repeat = _resolve_repeat(case, repeat_override, max_agent_repeat)
         run_rows: List[Dict[str, Any]] = []
         for attempt in range(1, repeat + 1):
             agent_result = run_case(adapter_name, case, workspace, timeout_seconds)

@@ -252,6 +252,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     manifest.write(manifest_path)
     print(f"[run] {run_id} cases={len(cases)} results={results_dir} manifest={manifest_path}")
 
+    max_agent_repeat = int(evaluator_config.config_value(config, "harness.max_agent_repeat", 9) or 9)
     rows = harness.run_evalset(
         cases=cases,
         adapter_name=args.adapter,
@@ -263,6 +264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         force=args.force,
         hit_rate_threshold=hit_rate_threshold,
         repeat_override=args.repeat,
+        max_agent_repeat=max_agent_repeat,
     )
     judge.save_cache()
 

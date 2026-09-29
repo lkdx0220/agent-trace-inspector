@@ -892,3 +892,11 @@ def test_judge_scores_and_cache(monkeypatch):
 def test_except_hygiene_has_no_silent_exception():
     result = quality_gate.check_except_hygiene()
     assert result["status"] == "pass", result.get("top")
+
+
+def test_resolve_repeat_respects_config_upper_bound():
+    from evaluator.harness import _resolve_repeat
+
+    assert _resolve_repeat({"agent_repeat": 100}, 0, max_repeat=3) == 3
+    assert _resolve_repeat({}, 5, max_repeat=2) == 2
+    assert _resolve_repeat({"agent_repeat": "bad"}, 0, max_repeat=3) == 1
