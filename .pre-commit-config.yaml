@@ -1,0 +1,27 @@
+# 本地提交前规范门：ruff check / ruff format / mypy / pytest smoke。
+# 安装：python -m pip install pre-commit && pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: python -m ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: python -m ruff format
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: python -m mypy --show-error-codes --no-error-summary --explicit-package-bases app evaluator schemas exporter tools
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: pytest-smoke
+        name: pytest smoke
+        entry: python -m pytest -q -p no:cacheprovider tests
+        language: system
+        pass_filenames: false
+        always_run: true
