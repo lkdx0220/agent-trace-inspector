@@ -25,7 +25,7 @@ from schemas.eval import RunCaseResult, TestCase
 def _collect_tools_from_trace(trace: Dict[str, Any]) -> List[str]:
     tools = []
 
-    def walk(span):
+    def walk(span: Dict[str, Any]) -> None:
         if span.get("span_type") == "tool" and span.get("name"):
             tools.append(span["name"])
         for child in span.get("children", []):
@@ -38,7 +38,7 @@ def _collect_tools_from_trace(trace: Dict[str, Any]) -> List[str]:
 def _collect_metrics_from_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
     spans = []
 
-    def walk(s):
+    def walk(s: Dict[str, Any]) -> None:
         spans.append(s)
         for c in s.get("children", []):
             walk(c)

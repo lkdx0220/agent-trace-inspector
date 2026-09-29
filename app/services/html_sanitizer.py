@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import html
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 ALLOWED_TAGS: Set[str] = {
     "p",
@@ -96,7 +96,7 @@ class _WhitelistParser(HTMLParser):
         self.stack: List[str] = []
         self.blocked_depth = 0
 
-    def handle_starttag(self, tag: str, attrs) -> None:
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         tag = tag.lower()
         if tag in BLOCKED_TAGS:
             self.blocked_depth += 1
@@ -120,7 +120,7 @@ class _WhitelistParser(HTMLParser):
         self.out.append(f"<{tag}{''.join(cleaned)}>")
         self.stack.append(tag)
 
-    def handle_startendtag(self, tag: str, attrs) -> None:
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         self.handle_starttag(tag, attrs)
         if tag.lower() not in VOID_TAGS:
             self.handle_endtag(tag)

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
+from typing import Awaitable, Callable, Dict
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,7 +24,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.middleware("http")
-async def add_no_cache(request, call_next):
+async def add_no_cache(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -36,15 +40,15 @@ app.include_router(doctor_router.router)
 
 
 @app.on_event("startup")
-def on_startup():
+def on_startup() -> None:
     init_db()
 
 
 @app.get("/")
-def root():
+def root() -> FileResponse:
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
 @app.get("/api/status")
-def status():
+def status() -> Dict[str, str]:
     return {"name": "Agent Trace Inspector", "status": "ok", "docs": "/docs"}

@@ -173,7 +173,7 @@ def _write_outputs(
         print(f"[DB] 已写入 inspector.db: {record.run_id}  {record.passed_cases}/{record.total_cases} 通过")
 
 
-def main(argv=None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
 
     config_path = evaluator_config.config_path_for_manifest(args.config)

@@ -48,5 +48,10 @@ module = ["evaluator.*"]
 disallow_untyped_defs = true
 check_untyped_defs = true
 
+[[tool.mypy.overrides]]
+module = ["app.*", "exporter.*", "tools.*"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

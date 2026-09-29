@@ -26,7 +26,7 @@ def _trace_summary(trace: Dict[str, Any]) -> str:
         return "（无 Trace）"
     lines = []
 
-    def walk(span, depth=0):
+    def walk(span: Dict[str, Any], depth: int = 0) -> None:
         name = span.get("name") or span.get("span_type")
         stype = span.get("span_type")
         extra = ""

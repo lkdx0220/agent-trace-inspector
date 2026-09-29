@@ -30,7 +30,7 @@ def _load_metadata() -> Dict[str, Any]:
 def _all_tool_texts(trace: Dict[str, Any]) -> str:
     parts = []
 
-    def walk(span):
+    def walk(span: Dict[str, Any]) -> None:
         if span.get("span_type") == "tool":
             preview = span.get("result_preview") or ""
             if preview:

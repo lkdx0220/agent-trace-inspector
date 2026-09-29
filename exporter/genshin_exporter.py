@@ -41,7 +41,7 @@ from schemas.trace import (
 MELTDOWN_TRIGGER_TOOLS = {"load_book_content", "load_quest_content", "find_first_mention"}
 
 
-def _load_agent_module(project_path: Path):
+def _load_agent_module(project_path: Path) -> Any:
     """动态加载原神剧情助手入口；project_path 必须通过固定根目录校验。"""
     root = ensure_project_path_local(project_path)
     entry = root / "genshin_story_agent.py"
@@ -77,7 +77,7 @@ def _status_of_tool_result(content: str) -> SpanStatus:
     return SpanStatus.SUCCESS
 
 
-def _find_tool_call(messages: List[BaseMessage], tool_call_id: Optional[str]):
+def _find_tool_call(messages: List[BaseMessage], tool_call_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """从最近的 AIMessage 中查找匹配 tool_call_id 的参数。"""
     if not tool_call_id:
         return None
@@ -361,11 +361,11 @@ def _enrich_trace_with_events(trace: Trace, events: list) -> None:
     """
     from datetime import datetime as _dt
 
-    starts: Dict[str, Any] = {}
-    ends: Dict[str, Any] = {}
-    by_event: Dict[str, Any] = {}
-    llm_starts: Dict[str, Any] = {}
-    llm_ends: Dict[str, Any] = {}
+    starts: Dict[str, Dict[str, Any]] = {}
+    ends: Dict[str, Dict[str, Any]] = {}
+    by_event: Dict[str, List[Dict[str, Any]]] = {}
+    llm_starts: Dict[str, List[Dict[str, Any]]] = {}
+    llm_ends: Dict[str, List[Dict[str, Any]]] = {}
     plan_events: List[Any] = []
 
     for ev in events:
@@ -388,7 +388,7 @@ def _enrich_trace_with_events(trace: Trace, events: list) -> None:
 
     llm_idx = {role: 0 for role in llm_starts}
 
-    def _take(role):
+    def _take(role: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         i = llm_idx.get(role, 0)
         if i < len(llm_starts.get(role, [])):
             s = llm_starts[role][i]
@@ -397,7 +397,7 @@ def _enrich_trace_with_events(trace: Trace, events: list) -> None:
             return s, e
         return None, None
 
-    def walk(span):
+    def walk(span: Span) -> None:
         if span.span_type == SpanType.TOOL and span.tool_call_id:
             start = starts.get(span.tool_call_id)
             end = ends.get(span.tool_call_id)
@@ -456,8 +456,8 @@ def _enrich_trace_with_events(trace: Trace, events: list) -> None:
             ends_ans = by_event.get("answer_end")
             if starts_ans:
                 span.start_time = _dt.fromtimestamp(starts_ans[-1]["timestamp"]).astimezone()
-            if (starts_ans[-1].get("data") or {}).get("model"):
-                span.model = starts_ans[-1]["data"]["model"]
+                if (starts_ans[-1].get("data") or {}).get("model"):
+                    span.model = starts_ans[-1]["data"]["model"]
             if ends_ans:
                 span.end_time = _dt.fromtimestamp(ends_ans[-1]["timestamp"]).astimezone()
 
@@ -471,7 +471,7 @@ def _fill_assess_router_times(trace: Trace, events: list) -> None:
     """给 assess/router 阶段补 start/end，减少未归属时间。"""
     from datetime import datetime as _dt
 
-    by_event: Dict[str, Any] = {}
+    by_event: Dict[str, Dict[str, Any]] = {}
     for ev in events:
         etype = ev.get("event")
         if etype in ("assess", "route", "rewrite"):
@@ -479,7 +479,7 @@ def _fill_assess_router_times(trace: Trace, events: list) -> None:
 
     assess = router = rewrite = None
 
-    def walk(span):
+    def walk(span: Span) -> None:
         nonlocal assess, router, rewrite
         if span.span_type == SpanType.ASSESS:
             assess = span
@@ -519,7 +519,7 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
     # 收集当前已有的 LLM Span 时间段，避免重复添加
     existing = []
 
-    def collect(span):
+    def collect(span: Span) -> None:
         if span.span_type == SpanType.LLM and span.start_time and span.end_time:
             existing.append((span.start_time, span.end_time))
         for child in span.children:
@@ -527,7 +527,7 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
 
     collect(trace.root_span)
 
-    def covered(st, en):
+    def covered(st: datetime, en: datetime) -> bool:
         for es, ee in existing:
             if abs((es - st).total_seconds()) < 1 and abs((ee - en).total_seconds()) < 1:
                 return True
@@ -536,7 +536,7 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
     # 找 rewrite 作为父节点（plan/answer 都挂在它下面）
     parent = None
 
-    def find_parent(span):
+    def find_parent(span: Span) -> None:
         nonlocal parent
         if span.span_type == SpanType.REWRITE and span.name == "rewrite_query":
             parent = span
@@ -599,7 +599,7 @@ def run_and_export(project_path: Path, question: str, out_path: Path, context: s
 
     events = []
 
-    def _sink(ev):
+    def _sink(ev: Dict[str, Any]) -> None:
         events.append(ev)
 
     tracer.enable_trace(_sink)
@@ -639,7 +639,7 @@ def run_and_export(project_path: Path, question: str, out_path: Path, context: s
     return trace
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="原神剧情助手 Trace 导出器")
     parser.add_argument("--project-path", required=True, help="CASE-原神剧情助手-修改用 目录")
     parser.add_argument("--question", required=True, help="要运行的问题")

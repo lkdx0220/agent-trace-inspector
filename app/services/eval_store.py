@@ -12,7 +12,7 @@ from app.db import get_conn
 from schemas.eval import RunRecord, TestCase
 
 
-def _ensure_tables(conn) -> None:
+def _ensure_tables(conn: Any) -> None:
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS test_cases (
@@ -317,7 +317,7 @@ def _golden_match_modes() -> Dict[str, str]:
         return {}
 
 
-def _rows_to_cases(rows) -> List[Dict[str, Any]]:
+def _rows_to_cases(rows: List[Any]) -> List[Dict[str, Any]]:
     modes = _golden_match_modes()
     out = []
     for r in rows:

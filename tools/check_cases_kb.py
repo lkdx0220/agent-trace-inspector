@@ -23,7 +23,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_KB = REPO.parent / "CASE-原神剧情助手-修改用"
@@ -33,7 +33,7 @@ MIN_HITS_OK = 3  # literal 必含词建议的最低 KB 命中数
 MIN_HITS_WARN = 1  # 1-2 命中算边缘
 
 
-def _keyword_rows(case: dict):
+def _keyword_rows(case: dict) -> List[Tuple[str, str, str, str]]:
     """产出 (来源, 类别, 文本, match)；来源含题目与 alternatives。"""
     rows = []
     for kind in ("must_contain", "must_not_contain"):
@@ -56,7 +56,7 @@ def _keyword_rows(case: dict):
     return [r for r in rows if r[2]]
 
 
-def _iter_dump_texts(kb: Path):
+def _iter_dump_texts(kb: Path) -> Iterator[str]:
     """kb_vectors_m3/chunk_dump.jsonl（六个集合的向量语料）逐条正文。"""
     for rel in ("kb_vectors_m3/chunk_dump.jsonl", "kb_vectors/chunk_dump.jsonl"):
         path = kb / rel
@@ -76,7 +76,7 @@ def _iter_dump_texts(kb: Path):
                     yield str(text)
 
 
-def _iter_graph_texts(kb: Path):
+def _iter_graph_texts(kb: Path) -> Iterator[str]:
     """kb_vectors/wiki_entry_graph.json 的标题 + 正文。"""
     path = kb / "kb_vectors" / "wiki_entry_graph.json"
     if not path.exists():
@@ -195,7 +195,7 @@ def check(cases_path: Path, kb: Path, use_graph: bool = True, verbose: bool = Tr
     return {"cases": len(cases), "errors": errors, "confirm": confirm, "warnings": warnings}
 
 
-def main(argv=None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="题集可判性校验（lint + KB 可达性）")
     parser.add_argument("--cases", required=True, help="题集 JSON 路径")
     parser.add_argument("--kb", default=str(DEFAULT_KB), help="被测项目路径（含 kb_vectors_m3 与 kb_vectors）")
