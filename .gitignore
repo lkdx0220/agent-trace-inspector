@@ -27,3 +27,7 @@ pytest-cache-files-*
 
 # 测评集只在本地保留，不推送 GitHub
 /evalset/genshin/
+
+# 根目录零散实验日志（历史日志迁移到 data/tmp/logs_archive_*）
+/_*.log
+/_*.err
