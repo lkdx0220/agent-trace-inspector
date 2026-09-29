@@ -37,5 +37,16 @@ warn_unused_ignores = false
 show_error_codes = true
 exclude = '(^|/)(\.venv|__pycache__|data|runs|quality)/'
 
+# 渐进收紧：契约层与评测核心先要求完整类型标注。
+[[tool.mypy.overrides]]
+module = ["schemas.*"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["evaluator.*"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

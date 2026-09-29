@@ -5,25 +5,25 @@ from __future__ import annotations
 
 import html
 from datetime import datetime
-from typing import Dict, List
+from typing import Any, Dict, List
 
 
-def _esc(value) -> str:
+def _esc(value: Any) -> str:
     """HTML 上下文转义；报告中所有来自 Agent/知识库/题目的内容都必须经过它。"""
     return html.escape(str(value if value is not None else ""), quote=True)
 
 
-def _esc_br(value) -> str:
+def _esc_br(value: Any) -> str:
     """先转义再插入 <br>，避免用原始换行拼接 HTML。"""
     return _esc(value).replace(chr(10), "<br>")
 
 
-def _fmt_score(value):
+def _fmt_score(value: Any) -> str:
     """None 显示为 ?，其余转义。"""
     return _esc(value if value is not None else "?")
 
 
-def _color_bar(score) -> str:
+def _color_bar(score: Any) -> str:
     if isinstance(score, (int, float)) and score >= 0:
         pct = score / 5 * 100
         if score >= 4:
@@ -39,7 +39,7 @@ def _color_bar(score) -> str:
     return '<span class="score">?</span>'
 
 
-def _dot(ok) -> str:
+def _dot(ok: Any) -> str:
     return '<span class="dot dot-ok">OK</span>' if ok else '<span class="dot dot-fail">FAIL</span>'
 
 
@@ -199,7 +199,7 @@ def _render_detail_card(r: Dict) -> str:
 </div>"""
 
 
-def generate_html(results: List[Dict], output_path: str, judge_model: str = "deepseek-chat"):
+def generate_html(results: List[Dict], output_path: str, judge_model: str = "deepseek-chat") -> None:
     """生成 HTML 评估报告"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

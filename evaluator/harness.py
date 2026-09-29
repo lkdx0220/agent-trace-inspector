@@ -211,7 +211,7 @@ def run_case(
     return _validate_adapter_result(result, adapter_name) or result
 
 
-def _median(values) -> Optional[float]:
+def _median(values: List[Any]) -> Optional[float]:
     vals = [float(v) for v in values if isinstance(v, (int, float))]
     if not vals:
         return None

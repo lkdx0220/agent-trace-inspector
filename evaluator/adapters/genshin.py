@@ -20,7 +20,10 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from schemas.trace import Trace
 
 # evaluator/adapters/genshin.py -> adapters -> evaluator -> agent-trace-inspector -> 工作区
 _DEFAULT_WORKSPACE = str(Path(__file__).resolve().parents[3])
@@ -35,8 +38,12 @@ def _case_dir() -> str:
 
 
 def _trace_from_result(
-    result: Dict[str, Any], question: str, started_at: datetime, case_dir: str, events: List[Dict[str, Any]]
-):
+    result: Dict[str, Any],
+    question: str,
+    started_at: datetime,
+    case_dir: str,
+    events: List[Dict[str, Any]],
+) -> Optional[Trace]:
     """复用导出器的 Trace 构建逻辑，返回 Trace 或 None。"""
     try:
         from exporter.genshin_exporter import (
