@@ -681,8 +681,11 @@ def test_judge_pure_helpers():
         raise AssertionError("非法 judge 输出应抛异常")
     except judge.JudgeUnavailableError:
         pass
-    assert judge._cache_key("prompt", 16) == judge._cache_key("prompt", 16)
-    assert judge._cache_key("prompt", 16, 1) != judge._cache_key("prompt", 16, 0)
+    key_a = judge._cache_key("prompt-a", 16)
+    key_b = judge._cache_key("prompt-b", 16)
+    assert key_a != key_b
+    assert key_a != judge._cache_key("prompt-a", 16, 1)
+    assert judge._cache_key("prompt-a", 16, 1) != judge._cache_key("prompt-a", 16, 0)
 
 
 def test_keywords_literal_and_case_variants():

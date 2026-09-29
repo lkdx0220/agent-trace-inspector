@@ -220,9 +220,8 @@ def keyword_retrieval_conclusion(keyword: str, where: Dict[str, Any], probe: Dic
         return "工具返回已包含该关键词，但最终答案未使用 → 回答阶段未整合/漏用"
     if kb_hit and not tool_hit:
         return "知识库检索能命中该关键词，但本次 Trace 的工具返回未包含 → 查询词/召回/切片问题，不是知识库缺失"
-    if not kb_hit:
-        return "知识库检索也未命中该关键词 → 可能知识库确实缺此信息，或需要更规范的专名/同义查询词；不能仅凭本次搜索断言“数据库不存在”"
-    return "关键词证据待人工复核"
+    # 走到这里时 tool_hit=False 且 kb_hit=False，不存在其他分支。
+    return "知识库检索也未命中该关键词 → 可能知识库确实缺此信息，或需要更规范的专名/同义查询词；不能仅凭本次搜索断言“数据库不存在”"
 
 
 def search_knowledge_base(project_path: str, query: str, top_k: int = 6) -> Dict[str, Any]:

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -16,6 +17,8 @@ from app.services.run_service import compare_runs, create_offline_run
 
 router = APIRouter(prefix="/api", tags=["eval"], dependencies=[Depends(require_local_or_token)])
 INSPECTOR_ROOT = Path(__file__).resolve().parents[2]
+_CASE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_RUN_NAME_RE = re.compile(r"^[\w .:\-]{1,80}$", re.UNICODE)
 
 
 @router.get("/testcases")
@@ -35,22 +38,32 @@ def run_offline(name: str = "离线评测") -> Dict[str, Any]:
     return record.model_dump()
 
 
-@router.post("/runs/live")
-def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Phase 6：Web UI 实时评测改走新 evaluator 的薄 CLI，结束后桥接写回 inspector.db。"""
+def _validate_live_payload(payload: Dict[str, Any]) -> tuple[str, List[str], str]:
+    """校验 /runs/live 入参，返回 (project_path, case_ids, name)。"""
     project_path = payload.get("project_path", "")
     try:
         project_path = str(ensure_project_path(project_path))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     case_ids = payload.get("case_ids", [])
     if not isinstance(case_ids, list) or not all(isinstance(x, str) for x in case_ids):
         raise HTTPException(status_code=400, detail="case_ids 必须是字符串数组")
     if not case_ids or len(case_ids) > 100:
         raise HTTPException(status_code=400, detail="case_ids 数量必须在 1..100")
+    # 所有值最终都会进子进程参数列表；只接受安全字符，避免参数注入。
+    if not all(_CASE_ID_RE.fullmatch(item) for item in case_ids):
+        raise HTTPException(status_code=400, detail="case_ids 含非法字符")
+    name = str(payload.get("name") or "实时评测").strip()
+    if not _RUN_NAME_RE.fullmatch(name) or name.startswith("-"):
+        raise HTTPException(status_code=400, detail="name 含非法字符")
+    return project_path, case_ids, name
 
+
+@router.post("/runs/live")
+def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Phase 6：Web UI 实时评测改走新 evaluator 的薄 CLI，结束后桥接写回 inspector.db。"""
+    project_path, case_ids, name = _validate_live_payload(payload)
     run_id = f"run_{uuid.uuid4().hex[:8]}"
-    name = str(payload.get("name") or "实时评测")
     cmd = [
         sys.executable,
         str(INSPECTOR_ROOT / "tools" / "run_evalset.py"),

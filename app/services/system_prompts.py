@@ -13,31 +13,33 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import DEFAULT_PROJECT_PATH
+from app.services.path_guard import ensure_project_path
 
 PLAN_PROMPT_REL = Path("prompts/system/agent_system_v4_plan.txt")
 ANSWER_PROMPT_REL = Path("prompts/system/agent_system_v4_answer.txt")
 
 
 def _prompt_path(project_path: Optional[str], rel: Path) -> Path:
-    base = Path(project_path or DEFAULT_PROJECT_PATH)
+    # project_path 可能来自 HTTP payload / 命令行；先过只读项目根白名单。
+    base = ensure_project_path(project_path or DEFAULT_PROJECT_PATH)
     return base / rel
 
 
 def get_plan_system_prompt(project_path: Optional[str] = None) -> str:
     """读取规划 Agent 的系统提示词（只读）。"""
-    path = _prompt_path(project_path, PLAN_PROMPT_REL)
     try:
+        path = _prompt_path(project_path, PLAN_PROMPT_REL)
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return ""
 
 
 def get_answer_system_prompt(project_path: Optional[str] = None) -> str:
     """读取回答 Agent 的系统提示词（只读）。"""
-    path = _prompt_path(project_path, ANSWER_PROMPT_REL)
     try:
+        path = _prompt_path(project_path, ANSWER_PROMPT_REL)
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return ""
 
 

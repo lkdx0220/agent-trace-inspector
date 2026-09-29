@@ -20,10 +20,32 @@ from typing import Any, Dict, List
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "data" / "regression" / "fixtures"
 DEFAULT_CASES = ROOT / "evalset" / "genshin" / "cases.json"
+ALLOWED_RUN_ROOTS = (ROOT / "runs",)
+ALLOWED_CASES_ROOTS = (ROOT, ROOT.parent)
+ALLOWED_OUT_ROOTS = (ROOT / "data",)
+
+
+def _resolve_under(path_value: str | Path, roots: tuple[Path, ...], *, must_exist: bool = True) -> Path:
+    """把 CLI 传入的路径限定在白名单根目录内，避免任意路径读写。"""
+    raw = Path(path_value).expanduser()
+    if not raw.is_absolute():
+        raw = ROOT / raw
+    try:
+        resolved = raw.resolve(strict=must_exist)
+    except OSError as exc:
+        raise ValueError(f"路径不存在或不可访问: {path_value}") from exc
+    for root in roots:
+        try:
+            resolved.relative_to(root.resolve(strict=False))
+        except ValueError:
+            continue
+        return resolved
+    raise ValueError(f"路径不在允许目录内: {path_value}")
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    # path 由 _resolve_under 限定在允许目录内，不接受任意用户路径。
+    return json.loads(path.read_text(encoding="utf-8"))  # NOSONAR
 
 
 def _load_cases(path: Path) -> Dict[str, Dict[str, Any]]:
@@ -77,21 +99,24 @@ def _export_one(
 
 
 def export_fixtures(run_dir: str, ids: List[str], out_dir: str) -> List[Path]:
-    run_path = Path(run_dir)
+    run_path = _resolve_under(run_dir, ALLOWED_RUN_ROOTS)
     results_dir = run_path / "results"
     if not results_dir.exists():
         raise ValueError(f"results 目录不存在: {results_dir}")
     manifest_path = run_path / "manifest.json"
-    cases_path = DEFAULT_CASES
+    cases_path = _resolve_under(DEFAULT_CASES, ALLOWED_CASES_ROOTS)
     if manifest_path.exists():
         try:
             manifest = _load_json(manifest_path)
-            cases_path = Path(str(manifest.get("evalset_file") or "")) or DEFAULT_CASES
-        except (OSError, json.JSONDecodeError):
-            cases_path = DEFAULT_CASES
+            raw_cases = str(manifest.get("evalset_file") or "")
+            if raw_cases:
+                cases_path = _resolve_under(raw_cases, ALLOWED_CASES_ROOTS)
+        except (OSError, json.JSONDecodeError, ValueError):
+            cases_path = _resolve_under(DEFAULT_CASES, ALLOWED_CASES_ROOTS)
     if not cases_path.exists():
         raise ValueError(f"题集文件不存在: {cases_path}")
     cases = _load_cases(cases_path)
+    output_root = _resolve_under(out_dir or str(DEFAULT_OUT), ALLOWED_OUT_ROOTS, must_exist=False)
 
     selected = ids or [path.stem.lstrip("q_") for path in sorted(results_dir.glob("q_*.json"))]
     exported: List[Path] = []
@@ -105,7 +130,7 @@ def export_fixtures(run_dir: str, ids: List[str], out_dir: str) -> List[Path]:
             print(f"跳过（含语义关键词，避免测试依赖网络 judge）: {case_id}")
             continue
         row = _load_json(row_path)
-        exported.append(_export_one(case_id, row, case, run_path.name, Path(out_dir)))
+        exported.append(_export_one(case_id, row, case, run_path.name, output_root))
     return exported
 
 

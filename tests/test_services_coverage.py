@@ -357,10 +357,13 @@ def test_eval_store_roundtrip(monkeypatch: pytest.MonkeyPatch, workdir: Path):
 # ============================================================
 
 
-def test_system_prompts_read_and_missing(workdir: Path):
+def test_system_prompts_read_and_missing(workdir: Path, monkeypatch):
+    from app.services import path_guard
+
     project = workdir / "proj"
     prompt_dir = project / "prompts" / "system"
     prompt_dir.mkdir(parents=True)
+    monkeypatch.setattr(path_guard, "ALLOWED_PROJECT_PATHS", [project.resolve()])
     (prompt_dir / "agent_system_v4_plan.txt").write_text(
         "head\n===== 不调工具的前置检查 =====\n必须调用工具\n===== 工具选择策略 =====\ntail",
         encoding="utf-8",

@@ -87,10 +87,17 @@ def _extract_json(content: str) -> Optional[Dict[str, Any]]:
     if not content:
         return None
     text = content.strip()
-    # 去掉 ```json ... ``` 围栏
-    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if fence:
-        text = fence.group(1).strip()
+    # 去掉 ```json ... ``` 围栏。
+    # 不用正则，避免 Sonar 规则 S8786 指出的超线性回溯。
+    fence_start = text.find("```")
+    if fence_start >= 0:
+        fence_end = text.find("```", fence_start + 3)
+        if fence_end > fence_start:
+            fenced = text[fence_start + 3 : fence_end].strip()
+            if fenced[:4].lower() == "json":
+                fenced = fenced[4:].strip()
+            if fenced:
+                text = fenced
     try:
         return json.loads(text)
     except json.JSONDecodeError:

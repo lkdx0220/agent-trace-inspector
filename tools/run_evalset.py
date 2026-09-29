@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
+import secrets
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -198,7 +198,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("[错误] 题集不存在")
         return 2
 
-    run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{random.randint(1000, 9999)}"
+    run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{secrets.randbelow(9000) + 1000:04d}"
     runs_dir_value = str(args.runs_dir or evaluator_config.config_value(config, "harness.runs_dir", "runs") or "runs")
     runs_dir = Path(runs_dir_value)
     if not runs_dir.is_absolute():
