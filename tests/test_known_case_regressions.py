@@ -5,6 +5,7 @@
 data/regression/fixtures/（本地目录，已 gitignore）。没有夹具时自动跳过，
 公开仓库 CI 不会因此失败。
 """
+
 from __future__ import annotations
 
 import json
@@ -46,9 +47,7 @@ def test_known_case_keyword_results_stable():
             f"{case_id} keyword_pass 漂移：期望 {expected_pass}，实际 {result['passed']}"
             f"；miss={got_miss} violations={got_violations}"
         )
-        assert got_miss == expected_miss, (
-            f"{case_id} miss 漂移：期望 {expected_miss}，实际 {got_miss}"
-        )
+        assert got_miss == expected_miss, f"{case_id} miss 漂移：期望 {expected_miss}，实际 {got_miss}"
         assert got_violations == expected_violations, (
             f"{case_id} violations 漂移：期望 {expected_violations}，实际 {got_violations}"
         )

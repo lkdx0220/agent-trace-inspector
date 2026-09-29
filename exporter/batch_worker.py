@@ -7,6 +7,7 @@
 用法（在 agent-trace-inspector 目录）：
     python -m exporter.batch_worker --project-path ... --cases /tmp/cases.json
 """
+
 import argparse
 import json
 import sys

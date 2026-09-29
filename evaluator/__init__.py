@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """共享 evaluator：契约、manifest、题集 lint；Phase 2 再迁入 harness/scorers。"""
+
 from evaluator.contract import (  # noqa: F401
     ALLOWED_STATUSES,
     CONTRACT_VERSION,

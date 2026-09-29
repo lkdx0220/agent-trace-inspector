@@ -14,6 +14,7 @@
     python tools/quality_gate.py --strict
     python tools/quality_gate.py --skip pytest
 """
+
 from __future__ import annotations
 
 import argparse
@@ -99,13 +100,20 @@ def _first_lines(text: str, limit: int = 8) -> List[str]:
 # 1) ruff
 # ---------------------------------------------------------------
 
+
 def check_ruff() -> Dict[str, Any]:
     cmd = _py_module("ruff") + ["check", "--output-format", "json"] + TARGETS
     r = _run(cmd)
     issues: List[Dict[str, Any]] = []
     if r["returncode"] not in (0, 1):
-        return {"name": "ruff", "status": "error", "duration_s": r["duration_s"], "issue_count": 0,
-                "summary": f"ruff 执行失败 rc={r['returncode']}", "top": _first_lines(r["stderr"])}
+        return {
+            "name": "ruff",
+            "status": "error",
+            "duration_s": r["duration_s"],
+            "issue_count": 0,
+            "summary": f"ruff 执行失败 rc={r['returncode']}",
+            "top": _first_lines(r["stderr"]),
+        }
     raw = (r["stdout"] or "").strip()
     if raw:
         try:
@@ -138,17 +146,27 @@ MYPY_ERR_RE = re.compile(r": error: ")
 
 
 def check_mypy() -> Dict[str, Any]:
-    cmd = _py_module("mypy") + [
-        "--show-error-codes",
-        "--no-error-summary",
-        "--explicit-package-bases",
-    ] + TARGETS
+    cmd = (
+        _py_module("mypy")
+        + [
+            "--show-error-codes",
+            "--no-error-summary",
+            "--explicit-package-bases",
+        ]
+        + TARGETS
+    )
     r = _run(cmd)
     text = (r["stdout"] or "") + "\n" + (r["stderr"] or "")
     errors = [line for line in text.splitlines() if MYPY_ERR_RE.search(line)]
     if r["returncode"] not in (0, 1):
-        return {"name": "mypy", "status": "error", "duration_s": r["duration_s"], "issue_count": len(errors),
-                "summary": f"mypy 执行失败 rc={r['returncode']}", "top": _first_lines(text)}
+        return {
+            "name": "mypy",
+            "status": "error",
+            "duration_s": r["duration_s"],
+            "issue_count": len(errors),
+            "summary": f"mypy 执行失败 rc={r['returncode']}",
+            "top": _first_lines(text),
+        }
     return {
         "name": "mypy",
         "status": "pass" if not errors else "fail",
@@ -163,17 +181,30 @@ def check_mypy() -> Dict[str, Any]:
 # 3) radon
 # ---------------------------------------------------------------
 
+
 def check_radon() -> Dict[str, Any]:
     cmd = _py_module("radon") + ["cc", "-s", "-j"] + RADON_TARGETS
     r = _run(cmd)
     if r["returncode"] not in (0, 1):
-        return {"name": "radon", "status": "error", "duration_s": r["duration_s"], "issue_count": 0,
-                "summary": f"radon 执行失败 rc={r['returncode']}", "top": _first_lines(r["stderr"])}
+        return {
+            "name": "radon",
+            "status": "error",
+            "duration_s": r["duration_s"],
+            "issue_count": 0,
+            "summary": f"radon 执行失败 rc={r['returncode']}",
+            "top": _first_lines(r["stderr"]),
+        }
     try:
         data = json.loads(r["stdout"] or "{}")
     except Exception:
-        return {"name": "radon", "status": "error", "duration_s": r["duration_s"], "issue_count": 0,
-                "summary": "radon JSON 解析失败", "top": _first_lines(r["stdout"])}
+        return {
+            "name": "radon",
+            "status": "error",
+            "duration_s": r["duration_s"],
+            "issue_count": 0,
+            "summary": "radon JSON 解析失败",
+            "top": _first_lines(r["stdout"]),
+        }
     buckets = {"C": 0, "D": 0, "E": 0, "F": 0}
     hotspots: List[Tuple[int, str]] = []
     current_keys: set[str] = set()
@@ -186,7 +217,12 @@ def check_radon() -> Dict[str, Any]:
                 if rank in {"D", "E", "F"}:
                     key = f"{norm_path}::{b.get('name', '')}"
                     current_keys.add(key)
-                hotspots.append((int(b.get("complexity") or 0), f"{path}:{b.get('lineno', '?')} {b.get('name', '')} rank={rank} cc={b.get('complexity')}"))
+                hotspots.append(
+                    (
+                        int(b.get("complexity") or 0),
+                        f"{path}:{b.get('lineno', '?')} {b.get('name', '')} rank={rank} cc={b.get('complexity')}",
+                    )
+                )
     hotspots.sort(reverse=True)
     # C 级（11-20）属于可接受范围，不作为 warning；只监控 D/E/F。
     total_bad = buckets["D"] + buckets["E"] + buckets["F"]
@@ -223,11 +259,18 @@ def check_radon() -> Dict[str, Any]:
 # 4) vulture
 # ---------------------------------------------------------------
 
+
 def check_vulture() -> Dict[str, Any]:
-    cmd = _py_module("vulture") + TARGETS + [
-        "--min-confidence", "80",
-        "--exclude", "quality,.venv,__pycache__,data,runs",
-    ]
+    cmd = (
+        _py_module("vulture")
+        + TARGETS
+        + [
+            "--min-confidence",
+            "80",
+            "--exclude",
+            "quality,.venv,__pycache__,data,runs",
+        ]
+    )
     r = _run(cmd)
     text = (r["stdout"] or "") + "\n" + (r["stderr"] or "")
     # vulture 正常退出码是 0；有发现时也可能为 1/3。
@@ -250,11 +293,13 @@ COVERAGE_FAIL = 25.0
 # 5) pytest + coverage
 # ---------------------------------------------------------------
 
+
 def check_pytest() -> Dict[str, Any]:
     cov_json = REPORTS_DIR / "coverage.json"
     cmd = _py_module("pytest") + [
         "-q",
-        "-p", "no:cacheprovider",
+        "-p",
+        "no:cacheprovider",
         "--ignore-glob=pytest-cache-files-*",
         "--cov=app",
         "--cov=evaluator",
@@ -310,6 +355,7 @@ def check_pytest() -> Dict[str, Any]:
 # 6) import-linter
 # ---------------------------------------------------------------
 
+
 def check_import_linter() -> Dict[str, Any]:
     config = QUALITY_DIR / "importlinter.ini"
     exe = shutil.which("lint-imports")
@@ -360,15 +406,27 @@ def main() -> int:
     results: Dict[str, Any] = {}
     for name, fn in CHECKS.items():
         if name in args.skip:
-            results[name] = {"name": name, "status": "skipped", "duration_s": 0.0, "issue_count": 0,
-                             "summary": "已跳过", "top": []}
+            results[name] = {
+                "name": name,
+                "status": "skipped",
+                "duration_s": 0.0,
+                "issue_count": 0,
+                "summary": "已跳过",
+                "top": [],
+            }
             continue
         print(f"[quality-gate] running {name} ...", flush=True)
         try:
             results[name] = fn()
         except Exception as e:
-            results[name] = {"name": name, "status": "error", "duration_s": 0.0, "issue_count": 0,
-                             "summary": f"{type(e).__name__}: {e}", "top": []}
+            results[name] = {
+                "name": name,
+                "status": "error",
+                "duration_s": 0.0,
+                "issue_count": 0,
+                "summary": f"{type(e).__name__}: {e}",
+                "top": [],
+            }
 
     statuses = [r.get("status") for r in results.values()]
     if any(s in {"fail", "error"} for s in statuses):

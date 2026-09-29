@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Trace 指标计算。基于完整 Trace JSON，不依赖前端。"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -38,14 +39,17 @@ def _summarize_tools(tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         d = _ms(t.get("start_time"), t.get("end_time"))
         total_tool_ms += d
         name = t.get("name") or "?"
-        entry = tool_by_name.setdefault(name, {
-            "count": 0,
-            "success": 0,
-            "not_found": 0,
-            "intercepted": 0,
-            "error": 0,
-            "total_ms": 0,
-        })
+        entry = tool_by_name.setdefault(
+            name,
+            {
+                "count": 0,
+                "success": 0,
+                "not_found": 0,
+                "intercepted": 0,
+                "error": 0,
+                "total_ms": 0,
+            },
+        )
         entry["count"] += 1
         entry[t.get("status") or "success"] += 1
         entry["total_ms"] += d
@@ -62,8 +66,10 @@ def _summarize_tools(tools: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def _phase_latency(root: Dict[str, Any], spans: List[Dict[str, Any]]) -> Dict[str, Any]:
     phase_latency = {
-        "rewrite": _ms(root.get("children", [{}])[0].get("start_time") if root.get("children") else None,
-                      next((c.get("end_time") for c in root.get("children", []) if c.get("span_type") == "rewrite"), None)),
+        "rewrite": _ms(
+            root.get("children", [{}])[0].get("start_time") if root.get("children") else None,
+            next((c.get("end_time") for c in root.get("children", []) if c.get("span_type") == "rewrite"), None),
+        ),
         "assess": None,
         "router": None,
         "plan": None,

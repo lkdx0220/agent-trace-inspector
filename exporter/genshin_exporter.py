@@ -12,6 +12,7 @@ Agent Trace Inspector 的 Trace JSON。
         --question "胡桃传说任务讲了什么？" \
         --out "data/traces/sample_run.json"
 """
+
 from __future__ import annotations
 
 import argparse
@@ -127,42 +128,54 @@ def _build_stage_spans(
     execution_mode: Any,
     add_span: Any,
 ) -> Tuple[Span, Optional[Span]]:
-    rewrite = add_span(root, Span(
-        span_id="span_rewrite",
-        span_type=SpanType.REWRITE,
-        name="rewrite_query",
-        input={"user_query": question},
-        output={
-            "rewritten_query": result.get("rewritten_query"),
-            "alias_notes": result.get("alias_notes") or "",
-        },
-    ))
-    add_span(rewrite, Span(
-        span_id="span_assess",
-        span_type=SpanType.ASSESS,
-        name="assess_query",
-        input={"user_query": question},
-        output={"execution_mode": execution_mode},
-    ))
-    current_llm_parent: Optional[Span] = None
-    if execution_mode == "L1":
-        current_llm_parent = add_span(rewrite, Span(
-            span_id="span_fast_agent",
-            span_type=SpanType.LLM,
-            name="fast_agent",
-            output={},
-        ))
-    else:
-        add_span(rewrite, Span(
-            span_id="span_router",
-            span_type=SpanType.ROUTER,
-            name="intent_router",
+    rewrite = add_span(
+        root,
+        Span(
+            span_id="span_rewrite",
+            span_type=SpanType.REWRITE,
+            name="rewrite_query",
             input={"user_query": question},
             output={
-                "intent_labels": result.get("intent_labels") or [],
-                "injected_tools": [],
+                "rewritten_query": result.get("rewritten_query"),
+                "alias_notes": result.get("alias_notes") or "",
             },
-        ))
+        ),
+    )
+    add_span(
+        rewrite,
+        Span(
+            span_id="span_assess",
+            span_type=SpanType.ASSESS,
+            name="assess_query",
+            input={"user_query": question},
+            output={"execution_mode": execution_mode},
+        ),
+    )
+    current_llm_parent: Optional[Span] = None
+    if execution_mode == "L1":
+        current_llm_parent = add_span(
+            rewrite,
+            Span(
+                span_id="span_fast_agent",
+                span_type=SpanType.LLM,
+                name="fast_agent",
+                output={},
+            ),
+        )
+    else:
+        add_span(
+            rewrite,
+            Span(
+                span_id="span_router",
+                span_type=SpanType.ROUTER,
+                name="intent_router",
+                input={"user_query": question},
+                output={
+                    "intent_labels": result.get("intent_labels") or [],
+                    "injected_tools": [],
+                },
+            ),
+        )
     return rewrite, current_llm_parent
 
 
@@ -182,34 +195,43 @@ def _add_ai_message_span(
         plan_count += 1
         if execution_mode == "L2":
             parent = current_llm_parent or rewrite
-            current_llm_parent = add_span(parent, Span(
-                span_id=f"span_plan_{plan_count}",
-                span_type=SpanType.LLM,
-                name="plan_agent",
-                output={
-                    "execution_plan": content,
-                    "tool_call_names": [tc.get("name") for tc in tool_calls],
-                },
-                tool_calls=_tool_calls_from_ai(msg),
-            ))
+            current_llm_parent = add_span(
+                parent,
+                Span(
+                    span_id=f"span_plan_{plan_count}",
+                    span_type=SpanType.LLM,
+                    name="plan_agent",
+                    output={
+                        "execution_plan": content,
+                        "tool_call_names": [tc.get("name") for tc in tool_calls],
+                    },
+                    tool_calls=_tool_calls_from_ai(msg),
+                ),
+            )
     elif content and "final_response" in result:
         if execution_mode == "L1" and current_llm_parent is not None:
-            add_span(current_llm_parent, Span(
-                span_id="span_answer_l1",
-                span_type=SpanType.ANSWER,
-                name="answer_agent",
-                output={"final_response": content, "short_circuit": False},
-            ))
+            add_span(
+                current_llm_parent,
+                Span(
+                    span_id="span_answer_l1",
+                    span_type=SpanType.ANSWER,
+                    name="answer_agent",
+                    output={"final_response": content, "short_circuit": False},
+                ),
+            )
         else:
-            add_span(rewrite, Span(
-                span_id="span_answer",
-                span_type=SpanType.ANSWER,
-                name="answer_agent",
-                output={
-                    "final_response": content,
-                    "short_circuit": content.strip() == "当前知识库未收录。",
-                },
-            ))
+            add_span(
+                rewrite,
+                Span(
+                    span_id="span_answer",
+                    span_type=SpanType.ANSWER,
+                    name="answer_agent",
+                    output={
+                        "final_response": content,
+                        "short_circuit": content.strip() == "当前知识库未收录。",
+                    },
+                ),
+            )
     return current_llm_parent, plan_count
 
 
@@ -229,11 +251,7 @@ def _add_tool_message_span(
         getattr(msg, "tool_call_id", None),
     )
     args = tc.get("args", {}) if tc else {}
-    tool_name = (
-        tc.get("name")
-        if tc
-        else (getattr(msg, "name", None) or "?")
-    )
+    tool_name = tc.get("name") if tc else (getattr(msg, "name", None) or "?")
     tool_span = Span(
         span_id=f"span_tool_{step_ref[0] + 1}",
         span_type=SpanType.TOOL,
@@ -244,10 +262,7 @@ def _add_tool_message_span(
         result_preview=content[:500],
         result_full=content,
         result_length=len(content),
-        meltdown_trigger=(
-            (getattr(msg, "name", "") in MELTDOWN_TRIGGER_TOOLS)
-            and status == SpanStatus.SUCCESS
-        ),
+        meltdown_trigger=((getattr(msg, "name", "") in MELTDOWN_TRIGGER_TOOLS) and status == SpanStatus.SUCCESS),
     )
     if current_llm_parent is not None:
         add_span(current_llm_parent, tool_span)
@@ -260,6 +275,7 @@ def _capture_source_snapshot(project_path: Optional[Path]) -> Optional[SourceSna
         return None
     try:
         from app.services.source_snapshot import capture_snapshot
+
         return SourceSnapshot(**capture_snapshot(str(project_path)))
     except Exception:
         return None
@@ -292,7 +308,13 @@ def build_trace_from_result(
     for msg in messages:
         if isinstance(msg, AIMessage):
             current_llm_parent, plan_count = _add_ai_message_span(
-                msg, result, execution_mode, rewrite, current_llm_parent, add_span, plan_count,
+                msg,
+                result,
+                execution_mode,
+                rewrite,
+                current_llm_parent,
+                add_span,
+                plan_count,
             )
         elif isinstance(msg, ToolMessage):
             _add_tool_message_span(msg, messages, rewrite, current_llm_parent, add_span, step_ref)
@@ -304,6 +326,7 @@ def build_trace_from_result(
     if project_path is not None:
         try:
             from app.services.source_snapshot import capture_snapshot
+
             source_snapshot = SourceSnapshot(**capture_snapshot(str(project_path)))
         except Exception:
             source_snapshot = None
@@ -455,6 +478,7 @@ def _fill_assess_router_times(trace: Trace, events: list) -> None:
             by_event.setdefault(etype, ev)
 
     assess = router = rewrite = None
+
     def walk(span):
         nonlocal assess, router, rewrite
         if span.span_type == SpanType.ASSESS:
@@ -465,6 +489,7 @@ def _fill_assess_router_times(trace: Trace, events: list) -> None:
             rewrite = span
         for c in span.children:
             walk(c)
+
     walk(trace.root_span)
 
     if rewrite and not assess:
@@ -493,11 +518,13 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
 
     # 收集当前已有的 LLM Span 时间段，避免重复添加
     existing = []
+
     def collect(span):
         if span.span_type == SpanType.LLM and span.start_time and span.end_time:
             existing.append((span.start_time, span.end_time))
         for child in span.children:
             collect(child)
+
     collect(trace.root_span)
 
     def covered(st, en):
@@ -508,6 +535,7 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
 
     # 找 rewrite 作为父节点（plan/answer 都挂在它下面）
     parent = None
+
     def find_parent(span):
         nonlocal parent
         if span.span_type == SpanType.REWRITE and span.name == "rewrite_query":
@@ -515,6 +543,7 @@ def _add_missing_llm_spans_from_events(trace: Trace, events: list) -> None:
             return
         for child in span.children:
             find_parent(child)
+
     find_parent(trace.root_span)
     if parent is None:
         return
@@ -567,29 +596,34 @@ def run_and_export(project_path: Path, question: str, out_path: Path, context: s
 
     # 启用原项目可选 Trace Hook（默认关闭，这里由导出器开启）
     import app.trace_recorder as tracer
+
     events = []
+
     def _sink(ev):
         events.append(ev)
+
     tracer.enable_trace(_sink)
 
     agent = module.create_agent_workflow()
     conv_history = [{"user": context, "assistant": ""}] if context.strip() else []
-    result = agent.invoke({
-        "user_query": question,
-        "rewritten_query": None,
-        "alias_notes": None,
-        "conversation_history": conv_history,
-        "conversation_summary": "",
-        "messages": [],
-        "final_response": None,
-        "iteration": 0,
-        "plan_retry": 0,
-        "execution_plan": None,
-        "intent_labels": None,
-        "run_id": f"inspector_{uuid.uuid4().hex[:8]}",
-        "execution_mode": None,
-        "fast_iteration": 0,
-    })
+    result = agent.invoke(
+        {
+            "user_query": question,
+            "rewritten_query": None,
+            "alias_notes": None,
+            "conversation_history": conv_history,
+            "conversation_summary": "",
+            "messages": [],
+            "final_response": None,
+            "iteration": 0,
+            "plan_retry": 0,
+            "execution_plan": None,
+            "intent_labels": None,
+            "run_id": f"inspector_{uuid.uuid4().hex[:8]}",
+            "execution_mode": None,
+            "fast_iteration": 0,
+        }
+    )
 
     tracer.disable_trace()
 

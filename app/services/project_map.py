@@ -7,6 +7,7 @@
 
 本模块绝不修改被扫描的原项目。
 """
+
 from __future__ import annotations
 
 import ast
@@ -50,27 +51,35 @@ def _iter_code_symbols(text: str) -> List[Dict[str, Any]]:
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             doc = ast.get_docstring(node)
-            symbols.append({
-                "type": "function",
-                "name": node.name,
-                "line": node.lineno,
-                "doc": (doc or "").strip().splitlines()[0][:120] if doc else "",
-            })
+            symbols.append(
+                {
+                    "type": "function",
+                    "name": node.name,
+                    "line": node.lineno,
+                    "doc": (doc or "").strip().splitlines()[0][:120] if doc else "",
+                }
+            )
         elif isinstance(node, ast.ClassDef):
             doc = ast.get_docstring(node)
             methods = [
-                {"type": "method", "name": n.name, "line": n.lineno,
-                 "doc": (ast.get_docstring(n) or "").strip().splitlines()[0][:120] if ast.get_docstring(n) else ""}
+                {
+                    "type": "method",
+                    "name": n.name,
+                    "line": n.lineno,
+                    "doc": (ast.get_docstring(n) or "").strip().splitlines()[0][:120] if ast.get_docstring(n) else "",
+                }
                 for n in node.body
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
-            symbols.append({
-                "type": "class",
-                "name": node.name,
-                "line": node.lineno,
-                "doc": (doc or "").strip().splitlines()[0][:120] if doc else "",
-                "methods": methods[:12],
-            })
+            symbols.append(
+                {
+                    "type": "class",
+                    "name": node.name,
+                    "line": node.lineno,
+                    "doc": (doc or "").strip().splitlines()[0][:120] if doc else "",
+                    "methods": methods[:12],
+                }
+            )
     return symbols
 
 
@@ -84,21 +93,25 @@ def generate_project_map(project_path: str = DEFAULT_PROJECT_PATH) -> Dict[str, 
     for rel, role in MAP_FILES.items():
         path = root / rel
         if not path.exists():
-            files.append({
-                "path": rel,
-                "role": role,
-                "exists": False,
-                "symbols": [],
-            })
+            files.append(
+                {
+                    "path": rel,
+                    "role": role,
+                    "exists": False,
+                    "symbols": [],
+                }
+            )
             continue
         text = _safe_read(path)
-        files.append({
-            "path": rel,
-            "role": role,
-            "exists": True,
-            "size_chars": len(text),
-            "symbols": _iter_code_symbols(text),
-        })
+        files.append(
+            {
+                "path": rel,
+                "role": role,
+                "exists": True,
+                "size_chars": len(text),
+                "symbols": _iter_code_symbols(text),
+            }
+        )
     return {
         "project_path": str(root),
         "project_name": root.name,
@@ -109,7 +122,7 @@ def generate_project_map(project_path: str = DEFAULT_PROJECT_PATH) -> Dict[str, 
 def format_project_map(project_map: Dict[str, Any], max_chars: int = 6000) -> str:
     lines = [f"项目：{project_map.get('project_path')}"]
     for f in project_map.get("files", []):
-        lines.append(f"\n## {f['path']}  （{f.get('role','')}）")
+        lines.append(f"\n## {f['path']}  （{f.get('role', '')}）")
         if not f.get("exists"):
             lines.append("  [文件不存在]")
             continue

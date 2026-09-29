@@ -3,6 +3,7 @@
 
 这些检查只依赖 Trace JSON 和提示词原文，不调用 LLM，也不 import 被测项目。
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

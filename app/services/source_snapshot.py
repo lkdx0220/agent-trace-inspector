@@ -6,6 +6,7 @@
 - 医生分析旧 Trace 时对比当前工作区，识别版本是否一致；
 - 没有快照的历史 Trace 只能以“当前视角”分析，不能断言当时行为。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -61,7 +62,10 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
     try:
         r = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(project_path), capture_output=True, text=True, timeout=10,
+            cwd=str(project_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=build_child_env(),
         )
         if r.returncode == 0:
@@ -71,7 +75,10 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
     try:
         r = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=str(project_path), capture_output=True, text=True, timeout=10,
+            cwd=str(project_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=build_child_env(),
         )
         if r.returncode == 0:

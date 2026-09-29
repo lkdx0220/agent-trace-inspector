@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """评测结果存储层：测试用例 / Run / RunCase。"""
+
 from __future__ import annotations
 
 import json
@@ -117,7 +118,10 @@ def save_test_case(case: TestCase) -> None:
               alternatives=excluded.alternatives
             """,
             (
-                case.case_id, case.question, case.category, case.difficulty,
+                case.case_id,
+                case.question,
+                case.category,
+                case.difficulty,
                 case.expected_answer,
                 json.dumps(case.must_contain, ensure_ascii=False),
                 json.dumps(case.must_not_contain, ensure_ascii=False),
@@ -155,6 +159,7 @@ def import_golden_set(data: Dict[str, Any]) -> int:
 def import_reference_yaml(path: str) -> int:
     """从 reference_answers_golden.yaml 导入完整参考答案。"""
     import yaml
+
     data = yaml.safe_load(open(path, encoding="utf-8"))
     conn = get_conn()
     count = 0
@@ -206,7 +211,9 @@ def save_diagnosis(run_id: str, case_id: str, trace_id: str, diagnosis: dict, pr
               created_at=excluded.created_at
             """,
             (
-                run_id, case_id, trace_id,
+                run_id,
+                case_id,
+                trace_id,
                 diagnosis.get("root_cause", ""),
                 json.dumps(diagnosis.get("evidence", []), ensure_ascii=False),
                 diagnosis.get("suggestion", ""),
@@ -287,7 +294,10 @@ def get_test_case(case_id: str) -> Optional[Dict[str, Any]]:
     conn = get_conn()
     try:
         _ensure_tables(conn)
-        row = conn.execute("SELECT case_id, question, category, difficulty, expected_answer, must_contain, must_not_contain, expected_tools, expected_route, match_mode FROM test_cases WHERE case_id=?", (case_id,)).fetchone()
+        row = conn.execute(
+            "SELECT case_id, question, category, difficulty, expected_answer, must_contain, must_not_contain, expected_tools, expected_route, match_mode FROM test_cases WHERE case_id=?",
+            (case_id,),
+        ).fetchone()
         if not row:
             return None
         return _rows_to_cases([row])[0]
@@ -302,10 +312,7 @@ def _golden_match_modes() -> Dict[str, str]:
     """从 golden_test_set.json 读取 match_mode（all / any），弥补 DB 未存储该字段。"""
     try:
         data = json.loads(GOLDEN_SET_PATH.read_text(encoding="utf-8"))
-        return {
-            q.get("id", ""): (q.get("match_mode") or "all")
-            for q in data.get("questions", [])
-        }
+        return {q.get("id", ""): (q.get("match_mode") or "all") for q in data.get("questions", [])}
     except Exception:
         return {}
 
@@ -356,7 +363,9 @@ def list_runs() -> List[Dict[str, Any]]:
     conn = get_conn()
     try:
         _ensure_tables(conn)
-        rows = conn.execute("SELECT run_id, name, created_at, agent_name, summary_json, results_json FROM runs ORDER BY created_at DESC").fetchall()
+        rows = conn.execute(
+            "SELECT run_id, name, created_at, agent_name, summary_json, results_json FROM runs ORDER BY created_at DESC"
+        ).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -372,7 +381,10 @@ def get_run(run_id: str) -> Optional[Dict[str, Any]]:
     conn = get_conn()
     try:
         _ensure_tables(conn)
-        row = conn.execute("SELECT run_id, name, created_at, agent_name, summary_json, results_json FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        row = conn.execute(
+            "SELECT run_id, name, created_at, agent_name, summary_json, results_json FROM runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
         if not row:
             return None
         d = dict(row)

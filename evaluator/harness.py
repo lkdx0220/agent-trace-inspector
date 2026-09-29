@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """共享 harness：子进程跑 adapter、超时 kill、打分、落盘、manifest 更新。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -77,9 +78,14 @@ def _validate_cached_result(cached: Any, case: Dict[str, Any]) -> tuple[bool, st
         return False, "题目内容已变化，缓存失效"
     if "error" not in cached:
         required = [
-            "question", "category", "answer", "ragas",
-            "must_contain_result", "must_not_contain_result",
-            "citation_result", "elapsed",
+            "question",
+            "category",
+            "answer",
+            "ragas",
+            "must_contain_result",
+            "must_not_contain_result",
+            "citation_result",
+            "elapsed",
         ]
         missing = [k for k in required if k not in cached]
         if missing:
@@ -220,9 +226,7 @@ def _median_ragas(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for dim in dims:
         vals = [
-            (r.get("ragas") or {}).get(dim)
-            for r in rows
-            if isinstance((r.get("ragas") or {}).get(dim), (int, float))
+            (r.get("ragas") or {}).get(dim) for r in rows if isinstance((r.get("ragas") or {}).get(dim), (int, float))
         ]
         out[dim] = _median(vals) if vals else (rows[0].get("ragas") or {}).get(dim)
     return out

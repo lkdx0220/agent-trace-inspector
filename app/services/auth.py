@@ -4,6 +4,7 @@
 默认只允许本机访问；如果设置了环境变量 INSPECTOR_API_TOKEN，
 则允许携带 Authorization: Bearer <token> 或 X-API-Token 的远程访问。
 """
+
 from __future__ import annotations
 
 import os

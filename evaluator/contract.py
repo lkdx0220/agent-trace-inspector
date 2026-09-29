@@ -6,6 +6,7 @@
 2. 推荐父进程起子进程 + JSON 交换，evaluator 不 import 被测项目代码；
 3. 每题必须返回 status，超时/异常/空答案分别可识别，不允许静默降级。
 """
+
 from __future__ import annotations
 
 import json

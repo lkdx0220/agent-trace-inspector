@@ -10,6 +10,7 @@
 设计文档：
     C:/Users/24701/Desktop/原神剧情/AgentTraceInspector设计文档.md
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -40,6 +41,7 @@ class SpanStatus(str, Enum):
 
 class ToolCallData(BaseModel):
     """LLM 输出的一个工具调用。"""
+
     name: str
     args: Dict[str, Any] = Field(default_factory=dict)
     tool_call_id: Optional[str] = None
@@ -47,6 +49,7 @@ class ToolCallData(BaseModel):
 
 class Span(BaseModel):
     """通用 Span。各类型通过 span_type 区分，特有字段可选。"""
+
     span_id: str
     span_type: SpanType
     name: str
@@ -84,6 +87,7 @@ class AgentInfo(BaseModel):
 
 class TraceMetadata(BaseModel):
     """原神剧情助手特有信号。"""
+
     execution_mode: Optional[Literal["L1", "L2"]] = None
     intent_labels: Optional[List[str]] = None
     alias_notes: Optional[str] = None
@@ -99,6 +103,7 @@ class SourceSnapshot(BaseModel):
     用于后续医生/评估器判断：当前工作区代码是否仍是 Trace 运行时的版本。
     缺少该字段的旧 Trace 不应被当作“当前代码已生效”来判定历史违规。
     """
+
     captured_at: Optional[datetime] = None
     git_commit: Optional[str] = None
     git_dirty: Optional[bool] = None

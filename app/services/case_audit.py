@@ -7,6 +7,7 @@
 2. 可选轻量 LLM（deepseek-flash）比对实际答案与参考答案，输出强弱判断；
 3. 记录到 case_audits 表，供批量查看“可疑通过”。
 """
+
 from __future__ import annotations
 
 import json
@@ -34,10 +35,12 @@ def _ngrams(text: str, n: int = 4) -> set:
     text = (text or "").strip()
     if len(text) < n:
         return {text} if text else set()
-    return set(text[i:i + n] for i in range(len(text) - n + 1))
+    return set(text[i : i + n] for i in range(len(text) - n + 1))
 
 
-def _deterministic_audit(answer: str, expected: str, must_contain: List[str], must_not_contain: List[str]) -> Dict[str, Any]:
+def _deterministic_audit(
+    answer: str, expected: str, must_contain: List[str], must_not_contain: List[str]
+) -> Dict[str, Any]:
     ans = (answer or "").strip()
     ref = (expected or "").strip()
     out: Dict[str, Any] = {
@@ -71,12 +74,7 @@ def _deterministic_audit(answer: str, expected: str, must_contain: List[str], mu
         out["length_ratio"] = round(min(1.0, len(ans) / max(1, len(ref))), 4)
 
     # 综合分：参考答案覆盖占大头，关键词覆盖不能全信。
-    score = (
-        0.45 * out["jaccard"]
-        + 0.25 * out["containment"]
-        + 0.15 * out["keyword_rate"]
-        + 0.15 * out["length_ratio"]
-    )
+    score = 0.45 * out["jaccard"] + 0.25 * out["containment"] + 0.15 * out["keyword_rate"] + 0.15 * out["length_ratio"]
     out["score"] = round(score, 4)
 
     if out["short_circuit"]:
@@ -226,16 +224,18 @@ def audit_run(run_id: str, use_llm: bool = True, only_passed: bool = True) -> Di
             results.append(audit_case(run_id, r["case_id"], use_llm=use_llm))
         except Exception:
             # 不把内部异常细节写入审计结果，避免泄露路径/Key/堆栈。
-            results.append({
-                "run_id": run_id,
-                "case_id": r.get("case_id"),
-                "question": r.get("question"),
-                "passed": r.get("passed"),
-                "verdict": "error",
-                "score": 0.0,
-                "details": {"error": "audit failed"},
-                "created_at": datetime.now().astimezone().isoformat(),
-            })
+            results.append(
+                {
+                    "run_id": run_id,
+                    "case_id": r.get("case_id"),
+                    "question": r.get("question"),
+                    "passed": r.get("passed"),
+                    "verdict": "error",
+                    "score": 0.0,
+                    "details": {"error": "audit failed"},
+                    "created_at": datetime.now().astimezone().isoformat(),
+                }
+            )
     weak = [x for x in results if x.get("verdict") in {"weak", "suspicious", "contradicts"}]
     return {
         "run_id": run_id,

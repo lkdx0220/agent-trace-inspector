@@ -5,6 +5,7 @@
     python run_doctor_all.py --run run_3054e696
     python run_doctor_all.py --run run_3054e696 --force
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,9 +25,7 @@ def _is_fresh(payload: Dict[str, Any]) -> bool:
     """判断处方是否已带有 VulnClaw 反幻觉闸门字段。"""
     report = payload.get("report") or {}
     return bool(
-        report.get("_grounding")
-        and report.get("_near_miss")
-        and report.get("diagnosis", {}).get("evidence_level")
+        report.get("_grounding") and report.get("_near_miss") and report.get("diagnosis", {}).get("evidence_level")
     )
 
 

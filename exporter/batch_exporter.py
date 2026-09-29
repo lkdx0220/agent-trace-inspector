@@ -8,6 +8,7 @@
 
 注意：本模块只用于评测/观测，不改变原项目 Agent 的线上运行方式。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -37,6 +38,7 @@ class AgentBatchRunner:
 
         # 在项目模块加载成功后再导入其 trace_recorder，避免与观测端同名 app 包冲突。
         import app.trace_recorder as tracer
+
         self._tracer = tracer
 
         # 单例 Trace sink：只注册一次，之后靠 self.events 换新列表隔离每题。
@@ -64,22 +66,24 @@ class AgentBatchRunner:
 
         started_at = datetime.now().astimezone()
         conv_history = [{"user": context, "assistant": ""}] if context.strip() else []
-        result = self.agent.invoke({
-            "user_query": question,
-            "rewritten_query": None,
-            "alias_notes": None,
-            "conversation_history": conv_history,
-            "conversation_summary": "",
-            "messages": [],
-            "final_response": None,
-            "iteration": 0,
-            "plan_retry": 0,
-            "execution_plan": None,
-            "intent_labels": None,
-            "run_id": f"inspector_{uuid.uuid4().hex[:8]}",
-            "execution_mode": None,
-            "fast_iteration": 0,
-        })
+        result = self.agent.invoke(
+            {
+                "user_query": question,
+                "rewritten_query": None,
+                "alias_notes": None,
+                "conversation_history": conv_history,
+                "conversation_summary": "",
+                "messages": [],
+                "final_response": None,
+                "iteration": 0,
+                "plan_retry": 0,
+                "execution_plan": None,
+                "intent_labels": None,
+                "run_id": f"inspector_{uuid.uuid4().hex[:8]}",
+                "execution_mode": None,
+                "fast_iteration": 0,
+            }
+        )
 
         trace = build_trace_from_result(
             result,

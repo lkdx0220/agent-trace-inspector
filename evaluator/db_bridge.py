@@ -3,6 +3,7 @@
 
 目的：Web UI / 对比 / 报告 / 医生仍按旧表结构读取，但实际评测由新 evaluator 执行。
 """
+
 from __future__ import annotations
 
 import glob
@@ -80,6 +81,7 @@ def _build_check_results(
     if project_path:
         try:
             from app.services.system_prompts import get_plan_system_prompt
+
             plan_prompt = get_plan_system_prompt(project_path)
         except Exception:
             plan_prompt = ""
@@ -120,19 +122,21 @@ def _build_case_metrics(
     elapsed = row.get("elapsed")
     if elapsed is not None:
         metrics["duration_ms"] = int(float(elapsed) * 1000)
-    metrics.update({
-        "init_seconds": row.get("init_seconds"),
-        "agent_seconds": row.get("agent_seconds"),
-        "ragas": row.get("ragas"),
-        "judge_valid": row.get("judge_valid"),
-        "judge_errors": row.get("judge_errors") or [],
-        "citation_result": row.get("citation_result"),
-        "matched_variant": row.get("matched_variant"),
-        "adapter": row.get("adapter"),
-        "prompt_compliance": prompt_check,
-        "tool_check": tools_check,
-        "route_check": route_check,
-    })
+    metrics.update(
+        {
+            "init_seconds": row.get("init_seconds"),
+            "agent_seconds": row.get("agent_seconds"),
+            "ragas": row.get("ragas"),
+            "judge_valid": row.get("judge_valid"),
+            "judge_errors": row.get("judge_errors") or [],
+            "citation_result": row.get("citation_result"),
+            "matched_variant": row.get("matched_variant"),
+            "adapter": row.get("adapter"),
+            "prompt_compliance": prompt_check,
+            "tool_check": tools_check,
+            "route_check": route_check,
+        }
+    )
     return metrics
 
 
@@ -176,6 +180,7 @@ def build_case_result(
         reasons=reasons,
     )
 
+
 def build_run_record(
     run_dir: str | Path,
     name: str = "",
@@ -189,10 +194,7 @@ def build_run_record(
     if not rows:
         raise ValueError(f"没有找到评测结果: {run_dir / 'results'}")
 
-    results = [
-        build_case_result(row, cases.get(str(row.get("id"))), project_path=project_path)
-        for row in rows
-    ]
+    results = [build_case_result(row, cases.get(str(row.get("id"))), project_path=project_path) for row in rows]
     total = len(results)
     passed_cases = sum(1 for r in results if r.passed)
     durations = [r.metrics.get("duration_ms") for r in results if r.metrics.get("duration_ms")]
@@ -211,11 +213,14 @@ def build_run_record(
         passed_cases=passed_cases,
         failed_cases=total - passed_cases,
         pass_rate=round(passed_cases / total * 100, 1) if total else 0.0,
-        avg_duration_ms=round(sum(float(d) for d in durations if isinstance(d, (int, float))) / len(durations), 1) if durations else 0.0,
+        avg_duration_ms=round(sum(float(d) for d in durations if isinstance(d, (int, float))) / len(durations), 1)
+        if durations
+        else 0.0,
         results=results,
     )
 
 
 def save_run_record(record: RunRecord) -> None:
     from app.services.eval_store import save_run
+
     save_run(record)

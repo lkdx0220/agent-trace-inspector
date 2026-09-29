@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Shared scorers：judge / RAGAS / 关键词 / 引用 / 确定性检查。"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -86,9 +87,7 @@ def score_case(
         "matched_variant": matched_variant,
         "variant_results": variant_results,
         "keyword_reasons": keyword_reasons,
-        "keyword_passed": bool(
-            must_contain_result.get("passed") and must_not_contain_result.get("passed")
-        ),
+        "keyword_passed": bool(must_contain_result.get("passed") and must_not_contain_result.get("passed")),
         "citation_result": citation_result,
         "judge_valid": judge_valid,
         "judge_errors": judge_errors,

@@ -4,6 +4,7 @@
 注意：exporter 不能 import 观测端的 app.services.*，否则会与原项目同名 app 包冲突。
 因此这里只使用标准库，并自带原项目路径白名单。
 """
+
 from __future__ import annotations
 
 import re
@@ -13,9 +14,7 @@ from typing import Union
 INSPECTOR_ROOT = Path(__file__).resolve().parent.parent
 
 # 当前只允许导出原项目本体这一固定路径。
-ALLOWED_PROJECT_ROOT = Path(
-    "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
-).resolve()
+ALLOWED_PROJECT_ROOT = Path("C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用").resolve()
 
 # Trace JSON 只允许写入观测端 data/traces。
 ALLOWED_TRACE_ROOT = (INSPECTOR_ROOT / "data" / "traces").resolve()
@@ -71,6 +70,7 @@ def redact_sensitive(text: str) -> str:
     """对落盘 Trace 做最小脱敏，避免把 API Key/Bearer Token 写进 JSON。"""
     result = str(text or "")
     for pattern in _SECRET_PATTERNS:
+
         def _repl(match: re.Match) -> str:
             if match.lastindex and match.lastindex > 1:
                 return match.group(1) + "[REDACTED]"

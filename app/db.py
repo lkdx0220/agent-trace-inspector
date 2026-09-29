@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """SQLite 存储层。P1 先用标准库 sqlite3，保持零额外依赖。"""
+
 from __future__ import annotations
 
 import json
@@ -125,9 +126,15 @@ def save_trace(trace: Trace, db_path: Optional[Path] = None) -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    row["trace_id"], row["parent_id"], row["span_id"],
-                    row["span_type"], row["name"], row["status"],
-                    row["step_index"], row["start_time"], row["end_time"],
+                    row["trace_id"],
+                    row["parent_id"],
+                    row["span_id"],
+                    row["span_type"],
+                    row["name"],
+                    row["status"],
+                    row["step_index"],
+                    row["start_time"],
+                    row["end_time"],
                     row["data_json"],
                 ),
             )

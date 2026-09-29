@@ -3,6 +3,7 @@
 
 没有 manifest，跨轮/跨项目的结果不可比，只能靠手工快照目录对账。
 """
+
 from __future__ import annotations
 
 import hashlib

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """AI 归因诊断：根据失败结果 + Trace 日志，找出为什么关键词没通过。"""
+
 from __future__ import annotations
 
 import json
@@ -24,6 +25,7 @@ def _trace_summary(trace: Dict[str, Any]) -> str:
     if not trace:
         return "（无 Trace）"
     lines = []
+
     def walk(span, depth=0):
         name = span.get("name") or span.get("span_type")
         stype = span.get("span_type")
@@ -36,6 +38,7 @@ def _trace_summary(trace: Dict[str, Any]) -> str:
         lines.append(f"{name}{extra}")
         for c in span.get("children", []):
             walk(c, depth + 1)
+
     walk(trace.get("root_span") or {})
     return "\n".join(lines[:30])
 
@@ -67,7 +70,9 @@ def _load_diagnosis_context(run_id: str, case_id: str, project_path: str) -> Dic
         "reasons": reasons,
         "missing_keywords": [r for r in reasons if "缺少必须包含" in r],
         "bad_keywords": [r for r in reasons if "出现禁止包含" in r],
-        "prompt_compliance": check_prompt_compliance(trace, project_path) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"},
+        "prompt_compliance": check_prompt_compliance(trace, project_path)
+        if trace
+        else {"passed": None, "violations": [], "evidence": "无 Trace"},
         "prompt_rule_excerpt": get_tool_requirement_excerpt(project_path),
         "alternatives": (case_meta or {}).get("alternatives", []) or [],
     }
@@ -125,7 +130,7 @@ def _call_diagnosis_llm(
     for ep in api_keys:
         base_url = str(ep.get("base_url") or "").rstrip("/")
         if not is_allowed_llm_endpoint(base_url):
-            errors.append(f"[{ep.get('source','?')}] endpoint 不在白名单，已拒绝")
+            errors.append(f"[{ep.get('source', '?')}] endpoint 不在白名单，已拒绝")
             continue
         url = base_url + "/chat/completions"
         try:
@@ -158,9 +163,9 @@ def _call_diagnosis_llm(
                 save_diagnosis(run_id, case_id, trace_id, diag, prompt)
                 diag["prompt"] = prompt
                 return diag
-            errors.append(f"[{ep.get('source','?')}] HTTP {resp.status_code}")
+            errors.append(f"[{ep.get('source', '?')}] HTTP {resp.status_code}")
         except Exception:
-            errors.append(f"[{ep.get('source','?')}] 请求异常")
+            errors.append(f"[{ep.get('source', '?')}] 请求异常")
     return {"error": "LLM 调用失败: " + " | ".join(errors)}
 
 

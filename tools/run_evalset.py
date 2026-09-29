@@ -7,6 +7,7 @@
   python tools/run_evalset.py --force
   python tools/run_evalset.py --cases "C:/.../golden_test_set.json" --runs-dir runs
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,6 +31,7 @@ from evaluator.scorers import judge  # noqa: E402
 
 def _default_workspace() -> str:
     import os
+
     return os.environ.get("GOLDEN_TEST_WORKSPACE") or str(INSPECTOR_DIR.parent)
 
 
@@ -41,15 +43,23 @@ def _load_cases(path: str) -> List[Dict[str, Any]]:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run evalset with shared harness + scorers")
-    parser.add_argument("--cases", default="", help="题集 JSON；默认 evalset/<adapter>/cases.json，不存在时 genshin 回退 <workspace>/golden_test_set.json")
-    parser.add_argument("--adapter", default="genshin", choices=["genshin", "doctor"], help="被测 adapter：genshin 或 doctor")
+    parser.add_argument(
+        "--cases",
+        default="",
+        help="题集 JSON；默认 evalset/<adapter>/cases.json，不存在时 genshin 回退 <workspace>/golden_test_set.json",
+    )
+    parser.add_argument(
+        "--adapter", default="genshin", choices=["genshin", "doctor"], help="被测 adapter：genshin 或 doctor"
+    )
     parser.add_argument("--workspace", default="", help="被测项目工作区；默认 inspector 上一级")
     parser.add_argument("--runs-dir", default="", help="运行目录；默认 inspector/runs")
     parser.add_argument("--run-id", default="", help="自定义 run_id")
     parser.add_argument("--ids", default="", help="只跑指定题，逗号分隔")
     parser.add_argument("--limit", type=int, default=0, help="最多跑几题（调试用）")
     parser.add_argument("--timeout", type=int, default=0, help="单题超时秒数；默认 genshin=300，doctor=900")
-    parser.add_argument("--config", default="", help="evaluator 配置文件路径；默认 evaluator/config.yaml，不存在则 config.example.yaml")
+    parser.add_argument(
+        "--config", default="", help="evaluator 配置文件路径；默认 evaluator/config.yaml，不存在则 config.example.yaml"
+    )
     parser.add_argument("--judge-model", default="", help="覆盖配置里的 judge.model")
     parser.add_argument("--force", action="store_true", help="忽略缓存，全部重跑")
     parser.add_argument("--no-report", action="store_true", help="不生成 HTML 报告")
@@ -115,19 +125,27 @@ def _summarize_rows(rows: List[Dict[str, Any]]) -> Tuple[int, List[str]]:
         1
         for r in rows
         if not r.get("error")
-        and bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
-            (r.get("must_contain_result") or {}).get("passed")
-            and (r.get("must_not_contain_result") or {}).get("passed")
-        ))
+        and bool(
+            r.get("keyword_passed")
+            if r.get("keyword_passed") is not None
+            else (
+                (r.get("must_contain_result") or {}).get("passed")
+                and (r.get("must_not_contain_result") or {}).get("passed")
+            )
+        )
     )
     failures = [
         str(r.get("id"))
         for r in rows
         if r.get("error")
-        or not bool(r.get("keyword_passed") if r.get("keyword_passed") is not None else (
-            (r.get("must_contain_result") or {}).get("passed")
-            and (r.get("must_not_contain_result") or {}).get("passed")
-        ))
+        or not bool(
+            r.get("keyword_passed")
+            if r.get("keyword_passed") is not None
+            else (
+                (r.get("must_contain_result") or {}).get("passed")
+                and (r.get("must_not_contain_result") or {}).get("passed")
+            )
+        )
     ]
     return passed, failures
 
@@ -145,6 +163,7 @@ def _write_outputs(
         print(f"[报告] {report_path}")
     if args.save_db:
         from evaluator import db_bridge
+
         record = db_bridge.build_run_record(
             run_dir=run_dir,
             name=args.name,

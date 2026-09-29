@@ -16,6 +16,7 @@
     python tools/check_cases_kb.py --cases evalset/genshin/cases_heldout.json
     python tools/check_cases_kb.py --cases <题集> --kb <被测项目路径> --no-graph
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,8 +29,8 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_KB = REPO.parent / "CASE-原神剧情助手-修改用"
 sys.path.insert(0, str(REPO))
 
-MIN_HITS_OK = 3      # literal 必含词建议的最低 KB 命中数
-MIN_HITS_WARN = 1    # 1-2 命中算边缘
+MIN_HITS_OK = 3  # literal 必含词建议的最低 KB 命中数
+MIN_HITS_WARN = 1  # 1-2 命中算边缘
 
 
 def _keyword_rows(case: dict):
@@ -47,7 +48,9 @@ def _keyword_rows(case: dict):
         for kind in ("must_contain", "must_not_contain"):
             for raw in alt.get(kind) or []:
                 if isinstance(raw, dict):
-                    rows.append((f"备选{index}", kind, str(raw.get("text") or "").strip(), str(raw.get("match") or "literal")))
+                    rows.append(
+                        (f"备选{index}", kind, str(raw.get("text") or "").strip(), str(raw.get("match") or "literal"))
+                    )
                 else:
                     rows.append((f"备选{index}", kind, str(raw).strip(), "literal"))
     return [r for r in rows if r[2]]
@@ -91,9 +94,7 @@ def _iter_graph_texts(kb: Path):
 
 
 def _collect_literal_words(cases: List[dict]) -> List[str]:
-    return sorted({
-        text for case in cases for _, _, text, match in _keyword_rows(case) if match != "semantic"
-    })
+    return sorted({text for case in cases for _, _, text, match in _keyword_rows(case) if match != "semantic"})
 
 
 def _count_kb_hits(kb: Path, words: List[str], use_graph: bool) -> Tuple[Dict[str, int], Dict[str, int]]:
@@ -123,17 +124,19 @@ def _check_one_case(
     cid = case.get("id")
     reference = str(case.get("reference_answer") or "")
     if verbose:
-        print(f"\n--- {cid}　{case.get('category','')}　{case.get('difficulty','')}")
+        print(f"\n--- {cid}　{case.get('category', '')}　{case.get('difficulty', '')}")
     semantic_skipped = 0
     for _source, kind, text, match in _keyword_rows(case):
         if match == "semantic":
             semantic_skipped += 1
             continue
         total = hits.get(text, 0) + graph_hits.get(text, 0)
-        detail = f"向量语料 {hits.get(text,0)} 段 / 词条图 {graph_hits.get(text,0)} 条"
+        detail = f"向量语料 {hits.get(text, 0)} 段 / 词条图 {graph_hits.get(text, 0)} 条"
         if kind == "must_contain":
             if total == 0:
-                confirm.append(f"{cid} 必含词「{text}」KB 0 命中：若是专名则必然判 NG（换词或改判据）；若是措辞则需人工确认模型能否自行写出")
+                confirm.append(
+                    f"{cid} 必含词「{text}」KB 0 命中：若是专名则必然判 NG（换词或改判据）；若是措辞则需人工确认模型能否自行写出"
+                )
                 tag = "待确认"
             elif total < MIN_HITS_OK:
                 warnings.append(f"{cid} 必含词「{text}」KB 命中仅 {total} 次，边缘（建议 >= {MIN_HITS_OK}）")
@@ -209,9 +212,9 @@ def main(argv=None) -> int:
         from evaluator.lint import lint_cases
 
         lint = lint_cases(str(cases_path))
-        for line in (lint.get("errors") or []):
+        for line in lint.get("errors") or []:
             print(f"[lint 错误] {line}")
-        for line in (lint.get("warnings") or []):
+        for line in lint.get("warnings") or []:
             print(f"[lint 警告] {line}")
         print(f"[lint] {'通过' if not (lint.get('errors') or []) else '未通过'}")
     except Exception as exc:  # lint 失败不阻断可达性检查

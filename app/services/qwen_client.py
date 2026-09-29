@@ -8,6 +8,7 @@
 自动按顺序尝试：新 Key 额度耗尽/不可用后，回退到旧 DASHSCOPE Key。
 本模块只读环境变量/本地 .env，不把 Key 写入代码或日志。
 """
+
 from __future__ import annotations
 
 import os
@@ -91,11 +92,13 @@ def get_qwen_endpoints(project_path: Optional[str] = None) -> List[Dict[str, Any
         if key and key not in seen_keys:
             seen_keys.add(key)
             if is_allowed_llm_endpoint(QWEN_PRIMARY_BASE_URL):
-                endpoints.append({
-                    "base_url": QWEN_PRIMARY_BASE_URL,
-                    "api_key": key,
-                    "source": "primary",
-                })
+                endpoints.append(
+                    {
+                        "base_url": QWEN_PRIMARY_BASE_URL,
+                        "api_key": key,
+                        "source": "primary",
+                    }
+                )
             break
 
     for name in _FALLBACK_KEY_NAMES:
@@ -103,11 +106,13 @@ def get_qwen_endpoints(project_path: Optional[str] = None) -> List[Dict[str, Any
         if key and key not in seen_keys:
             seen_keys.add(key)
             if is_allowed_llm_endpoint(QWEN_FALLBACK_BASE_URL):
-                endpoints.append({
-                    "base_url": QWEN_FALLBACK_BASE_URL,
-                    "api_key": key,
-                    "source": "fallback",
-                })
+                endpoints.append(
+                    {
+                        "base_url": QWEN_FALLBACK_BASE_URL,
+                        "api_key": key,
+                        "source": "fallback",
+                    }
+                )
     return endpoints
 
 

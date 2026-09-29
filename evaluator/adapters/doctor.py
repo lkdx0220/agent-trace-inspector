@@ -20,6 +20,7 @@
    - report.prescriptions（每条 issue/root_cause/target_file/evidence_ids）
 3. 完整 resolution/fact_sheet/coverage 放进 contexts，供 RAGAS/引用类 scorer 使用。
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -89,12 +90,14 @@ def _compose_tool_trace(doctor: Dict[str, Any]) -> List[Dict[str, Any]]:
         entries = evidence_by_order.get(order_id) or []
         first_ok = next((e for e in entries if e.get("ok")), None)
         summary = str((first_ok or {}).get("summary") or "")
-        trace.append({
-            "name": order_id,
-            "status": "success" if first_ok else "error",
-            "result_preview": summary[:300],
-            "result_length": len(summary),
-        })
+        trace.append(
+            {
+                "name": order_id,
+                "status": "success" if first_ok else "error",
+                "result_preview": summary[:300],
+                "result_length": len(summary),
+            }
+        )
     return trace
 
 
@@ -117,11 +120,7 @@ def run_agent(case: Dict[str, Any]) -> Dict[str, Any]:
             adapter="doctor",
         ).to_dict()
 
-    project_path = str(
-        case.get("project_path")
-        or os.environ.get("DOCTOR_PROJECT_PATH")
-        or DEFAULT_PROJECT_PATH
-    )
+    project_path = str(case.get("project_path") or os.environ.get("DOCTOR_PROJECT_PATH") or DEFAULT_PROJECT_PATH)
 
     started = time.time()
     buffer = io.StringIO()

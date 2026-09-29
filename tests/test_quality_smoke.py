@@ -3,10 +3,11 @@
 
 只测纯函数/纯数据结构，不启动 FastAPI、不访问网络、不读原项目。
 """
-from evaluator.contract import AgentResult, AgentTimings
-from evaluator.scorers.keywords import normalize_keyword
+
 from app.services.coverage_gate import missing_orders
 from app.services.path_guard import is_allowed_project_path
+from evaluator.contract import AgentResult, AgentTimings
+from evaluator.scorers.keywords import normalize_keyword
 
 
 def test_agent_result_roundtrip():
@@ -49,15 +50,14 @@ def test_coverage_gate_finds_missing_orders():
 
 
 def test_path_guard_allow_and_deny():
-    assert is_allowed_project_path(
-        "C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用"
-    )
+    assert is_allowed_project_path("C:/Users/24701/Desktop/原神剧情/CASE-原神剧情助手-修改用")
     assert not is_allowed_project_path("C:/Windows")
     assert not is_allowed_project_path("")
 
 
 def test_diagnostic_pipeline_stage_registry():
     from app.services.diagnostic_pipeline import _STAGE_HANDLERS
+
     assert set(_STAGE_HANDLERS) == {
         "stage_input",
         "stage_routing",
@@ -72,6 +72,7 @@ def test_diagnostic_pipeline_stage_registry():
 
 def test_diagnostic_pipeline_unknown_stage_is_evidence_error():
     from app.services.diagnostic_pipeline import _run_stage
+
     out = _run_stage({"id": "LO-X", "category": "no_such_stage"}, {})
     assert out["ok"] is True
     assert out["status"] == "completed"
@@ -80,6 +81,7 @@ def test_diagnostic_pipeline_unknown_stage_is_evidence_error():
 
 def test_lab_check_handler_registry():
     from app.services.doctor_tools import _LAB_CHECK_HANDLERS
+
     assert set(_LAB_CHECK_HANDLERS) == {
         "trace_replay",
         "plan_intent",
@@ -97,6 +99,7 @@ def test_lab_check_handler_registry():
 
 def test_lab_check_unknown_order_category():
     from app.services.doctor_tools import run_lab_check
+
     out = run_lab_check("LO-NOPE", {"lab_orders": [{"id": "LO-NOPE", "category": "no_such_category"}]})
     assert out["ok"] is False
     assert "未支持的检查类别" in out["summary"]
@@ -104,6 +107,7 @@ def test_lab_check_unknown_order_category():
 
 def test_resolve_cause_rule_registry():
     from app.services.diagnostic_pipeline import _RESOLVE_RULES, _rule_other
+
     assert len(_RESOLVE_RULES) == 9
     state = {"chain": [], "missing_kws": [], "forbidden_kws": []}
     result = _rule_other({}, {}, state)
@@ -112,6 +116,7 @@ def test_resolve_cause_rule_registry():
 
 def test_fallback_default_prescription():
     from app.services.project_doctor import _fallback_default_prescription
+
     prescriptions = _fallback_default_prescription({})
     assert len(prescriptions) == 1
     assert prescriptions[0]["evidence_ids"] == []
@@ -120,6 +125,7 @@ def test_fallback_default_prescription():
 
 def test_first_str_arg_and_knowledge_query_terms():
     from app.services.diagnostic_pipeline import _first_str_arg, _knowledge_query_terms
+
     assert _first_str_arg({"a": 1, "b": " 散兵 "}) == "散兵"
     missing, forbidden, queries, nf_terms, char_terms = _knowledge_query_terms(
         {"must_contain": ["童话", "备份"], "must_not_contain": ["黑暗"]},
@@ -135,6 +141,7 @@ def test_first_str_arg_and_knowledge_query_terms():
 
 def test_knowledge_summary_empty():
     from app.services.diagnostic_pipeline import _knowledge_summary
+
     summary = _knowledge_summary({}, {})
     assert "无缺失词" in summary
     assert "无禁词" in summary
@@ -142,6 +149,7 @@ def test_knowledge_summary_empty():
 
 def test_audit_summary_plan_mismatch_and_short_circuit():
     from app.services.doctor_tools import _audit_summary
+
     summary = _audit_summary(
         {"plan_intents": ["hybrid_search"]},
         ["评测器未报零工具违规"],
@@ -156,23 +164,28 @@ def test_audit_summary_plan_mismatch_and_short_circuit():
 
 
 def test_fact_sheet_routing_applier():
-    from app.services.diagnostic_pipeline import _empty_fact_sheet, _apply_fact_routing
+    from app.services.diagnostic_pipeline import _apply_fact_routing, _empty_fact_sheet
+
     sheet = _empty_fact_sheet("答案", None, {"actual_tools": ["hybrid_search"]})
     assert sheet["actual_tools"] == ["hybrid_search"]
     assert sheet["routing_event_seen"] is False
-    _apply_fact_routing(sheet, {
-        "route_event_seen": True,
-        "current_code_hard_rule_hit": True,
-        "current_code_required_tools": ["query_quest"],
-        "injected_tools": ["hybrid_search"],
-        "missing_required_tools": ["query_quest"],
-    })
+    _apply_fact_routing(
+        sheet,
+        {
+            "route_event_seen": True,
+            "current_code_hard_rule_hit": True,
+            "current_code_required_tools": ["query_quest"],
+            "injected_tools": ["hybrid_search"],
+            "missing_required_tools": ["query_quest"],
+        },
+    )
     assert sheet["routing_event_seen"] is True
     assert sheet["routing_missing_required_tools"] == ["query_quest"]
 
 
 def test_doctor_tools_definition():
     from app.services.project_doctor import _doctor_tools
+
     names = {t["function"]["name"] for t in _doctor_tools()}
     assert "run_lab_check" not in names
     assert {"record_verified_claim", "pin_fact"} <= names
@@ -180,25 +193,40 @@ def test_doctor_tools_definition():
 
 def test_doctor_autofill_feedback_no_missing():
     from app.services.project_doctor import _doctor_autofill_feedback
+
     assert _doctor_autofill_feedback({}, [], {}) is None
 
 
 def test_lint_question_meta_rejects_bad_match_mode():
     from evaluator.lint import _lint_question_meta
+
     errors, warnings, info = [], [], []
-    _lint_question_meta({"match_mode": "bad", "must_contain": [], "must_not_contain": []}, "Q1", "questions[0]", errors, warnings, info)
+    _lint_question_meta(
+        {"match_mode": "bad", "must_contain": [], "must_not_contain": []}, "Q1", "questions[0]", errors, warnings, info
+    )
     assert any("match_mode 非法" in e for e in errors)
 
 
 def test_lint_keyword_item_semantic_skips_zero_hit():
     from collections import Counter
+
     from evaluator.lint import _lint_keyword_item
+
     errors, warnings, zero_hit, semantic_skipped, unclassified = [], [], [], [], []
     stats = Counter()
     _lint_keyword_item(
-        "Q1", "questions[0]", "must_contain", {"text": "未收录", "match": "semantic"}, "",
-        [{"answer": "没有", "contexts": ""}], errors, warnings, stats,
-        unclassified, zero_hit, semantic_skipped,
+        "Q1",
+        "questions[0]",
+        "must_contain",
+        {"text": "未收录", "match": "semantic"},
+        "",
+        [{"answer": "没有", "contexts": ""}],
+        errors,
+        warnings,
+        stats,
+        unclassified,
+        zero_hit,
+        semantic_skipped,
     )
     assert stats["semantic"] == 1
     assert semantic_skipped == ["Q1:未收录"]
@@ -206,7 +234,8 @@ def test_lint_keyword_item_semantic_skips_zero_hit():
 
 
 def test_report_escape_helpers():
-    from evaluator.report import _esc_br, _dot, _color_bar
+    from evaluator.report import _color_bar, _dot, _esc_br
+
     assert "<br>" in _esc_br("a" + chr(10) + "b")
     assert "&lt;" in _esc_br("<")
     assert "dot-ok" in _dot(True)
@@ -217,16 +246,20 @@ def test_report_escape_helpers():
 
 def test_build_case_keyword_state():
     from evaluator.db_bridge import _case_keyword_state
-    _, _, keyword_pass, reasons = _case_keyword_state({
-        "must_contain_result": {"passed": False, "miss": ["童话"]},
-        "must_not_contain_result": {"passed": True, "violations": []},
-    })
+
+    _, _, keyword_pass, reasons = _case_keyword_state(
+        {
+            "must_contain_result": {"passed": False, "miss": ["童话"]},
+            "must_not_contain_result": {"passed": True, "violations": []},
+        }
+    )
     assert keyword_pass is False
     assert any("缺少必须包含：童话" in r for r in reasons)
 
 
 def test_build_check_results_no_trace_defaults():
     from evaluator.db_bridge import _build_check_results
+
     tools_check, route_check, prompt_check = _build_check_results({}, {}, None, "")
     assert tools_check["passed"] is None
     assert route_check["passed"] is None
@@ -235,6 +268,7 @@ def test_build_check_results_no_trace_defaults():
 
 def test_run_evalset_summarize_rows():
     from tools.run_evalset import _summarize_rows
+
     rows = [
         {"id": "Q1", "keyword_passed": True},
         {"id": "Q2", "keyword_passed": False},
@@ -246,13 +280,15 @@ def test_run_evalset_summarize_rows():
 
 def test_collect_reason_keywords():
     from app.services.lab_orders import _collect_reason_keywords
+
     reasons = ["缺少必须包含：童话", "缺少必须包含：备份", "出现禁止包含：黑暗"]
     assert _collect_reason_keywords(reasons, "缺少必须包含：") == ["童话", "备份"]
     assert _collect_reason_keywords(reasons, "出现禁止包含：") == ["黑暗"]
 
 
 def test_gate_validate_kind():
-    from app.services.project_doctor import _gate_validate_kind, CONSISTENCY_KINDS
+    from app.services.project_doctor import CONSISTENCY_KINDS, _gate_validate_kind
+
     issues = []
     assert _gate_validate_kind({"conclusion_kind": "recall_failure"}, 0, issues) == "recall_failure"
     assert issues == []
@@ -263,6 +299,7 @@ def test_gate_validate_kind():
 
 def test_metrics_collect_and_summarize_tools():
     from app.services.metrics import _collect_spans, _summarize_tools
+
     root = {"span_type": "agent", "children": [{"span_type": "tool", "name": "hybrid_search", "status": "success"}]}
     spans = _collect_spans(root)
     assert len(spans) == 2
@@ -273,7 +310,9 @@ def test_metrics_collect_and_summarize_tools():
 
 def test_build_trace_header():
     from datetime import datetime
+
     from exporter.genshin_exporter import _build_trace_header
+
     trace_id, response_mode, root = _build_trace_header({"final_response": "当前知识库未收录。"}, "Q", datetime.now())
     assert trace_id.startswith("trace_")
     assert response_mode == "not_found"
@@ -282,6 +321,7 @@ def test_build_trace_header():
 
 def test_adapter_module_and_payload():
     from evaluator.harness import _adapter_module, _build_adapter_payload
+
     assert _adapter_module("genshin") == "evaluator.adapters.genshin"
     assert _adapter_module("nope") is None
     payload = _build_adapter_payload({"id": "Q1", "question": "q"})
@@ -291,6 +331,7 @@ def test_adapter_module_and_payload():
 
 def test_build_initial_state():
     from evaluator.adapters.genshin import _build_initial_state
+
     state = _build_initial_state("Q", "ctx")
     assert state["user_query"] == "Q"
     assert state["conversation_history"] == [{"user": "ctx", "assistant": "（上轮回答略）"}]
@@ -298,6 +339,7 @@ def test_build_initial_state():
 
 def test_evaluate_must_contain_literal():
     from app.services.evaluator import _evaluate_must_contain
+
     result = _evaluate_must_contain("答案包含钟离", ["钟离"], "all", None)
     assert result["contains_ok"] is True
     assert result["hit_count"] == 1
@@ -305,14 +347,19 @@ def test_evaluate_must_contain_literal():
 
 def test_render_detail_card_error():
     from evaluator.report import _render_detail_card
+
     html = _render_detail_card({"id": "Q1", "category": "x", "error": "boom"})
     assert "boom" in html
 
 
 def test_deterministic_trace_checks():
     from evaluator.scorers.deterministic import (
-        check_expected_route, check_expected_tools, check_prompt_compliance, collect_tools_from_trace,
+        check_expected_route,
+        check_expected_tools,
+        check_prompt_compliance,
+        collect_tools_from_trace,
     )
+
     trace = {
         "metadata": {"execution_mode": "L2"},
         "root_span": {"span_type": "agent", "children": [{"span_type": "tool", "name": "hybrid_search"}]},
@@ -332,6 +379,7 @@ def test_deterministic_trace_checks():
 
 def test_coverage_gate_validate_prescriptions():
     from app.services.coverage_gate import validate_prescriptions
+
     orders = [{"id": "LO-001"}]
     evidence = {"LO-001": [{"ok": True, "summary": "ok"}]}
     report = {
@@ -348,7 +396,9 @@ def test_coverage_gate_validate_prescriptions():
 
 def test_compute_trace_metrics_synthetic():
     from datetime import datetime
+
     from app.services.metrics import compute_trace_metrics
+
     t0 = datetime.now().isoformat()
     t1 = datetime.now().isoformat()
     trace = {
@@ -359,7 +409,9 @@ def test_compute_trace_metrics_synthetic():
             "span_type": "agent",
             "start_time": t0,
             "end_time": t1,
-            "children": [{"span_type": "tool", "name": "hybrid_search", "status": "success", "start_time": t0, "end_time": t1}],
+            "children": [
+                {"span_type": "tool", "name": "hybrid_search", "status": "success", "start_time": t0, "end_time": t1}
+            ],
         },
         "trace_events": [],
     }
@@ -371,9 +423,15 @@ def test_compute_trace_metrics_synthetic():
 
 def test_generate_lab_orders_basic():
     from app.services.lab_orders import generate_lab_orders
+
     result = {"reasons": ["缺少必须包含：童话"], "answer": "x", "prompt_pass": None}
     case = {"case_id": "R3", "must_contain": ["童话"]}
-    trace = {"root_span": {"span_type": "agent", "children": [{"span_type": "tool", "name": "hybrid_search", "status": "success"}]}}
+    trace = {
+        "root_span": {
+            "span_type": "agent",
+            "children": [{"span_type": "tool", "name": "hybrid_search", "status": "success"}],
+        }
+    }
     orders = generate_lab_orders(result, case, trace, None)
     ids = [o["id"] for o in orders]
     assert "LO-001" in ids
@@ -384,17 +442,33 @@ def test_generate_lab_orders_basic():
 def test_lint_cases_temp_file():
     import json
     from pathlib import Path
+
     from evaluator.lint import lint_cases
+
     path = Path("quality/reports/test_lint_cases_temp.json")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "schema_version": "1.0",
-        "metadata": {"project": "genshin", "total_questions": 1},
-        "questions": [{
-            "id": "Q1", "question": "q", "category": "c", "difficulty": "easy",
-            "match_mode": "all", "must_contain": ["钟离"], "must_not_contain": [], "reference_answer": "钟离",
-        }],
-    }, ensure_ascii=False), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "metadata": {"project": "genshin", "total_questions": 1},
+                "questions": [
+                    {
+                        "id": "Q1",
+                        "question": "q",
+                        "category": "c",
+                        "difficulty": "easy",
+                        "match_mode": "all",
+                        "must_contain": ["钟离"],
+                        "must_not_contain": [],
+                        "reference_answer": "钟离",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     try:
         report = lint_cases(str(path))
         assert report["ok"] is True
@@ -405,10 +479,20 @@ def test_lint_cases_temp_file():
 
 def test_render_summary_row():
     from evaluator.report import _render_summary_row
+
     row = {
-        "id": "Q1", "category": "c", "question": "问题",
+        "id": "Q1",
+        "category": "c",
+        "question": "问题",
         "ragas": {"faithfulness": 5, "answer_relevancy": 4, "context_precision": 3, "context_recall": 2},
-        "must_contain_result": {"passed": True, "hit_rate": 1.0, "miss": [], "semantic_hit": [], "hit": ["钟离"], "violations": []},
+        "must_contain_result": {
+            "passed": True,
+            "hit_rate": 1.0,
+            "miss": [],
+            "semantic_hit": [],
+            "hit": ["钟离"],
+            "violations": [],
+        },
         "must_not_contain_result": {"passed": True, "violations": []},
         "citation_result": {"passed": True, "total": 0, "verified": 0, "unverified": []},
         "elapsed": 1.0,
@@ -420,6 +504,7 @@ def test_render_summary_row():
 
 def test_html_sanitizer_blocks_scripts():
     from app.services.html_sanitizer import sanitize_html
+
     raw = '<p onclick="x()">hi<script>alert(1)</script><a href="javascript:bad()">x</a><a href="https://example.com">ok</a></p>'
     out = sanitize_html(raw)
     assert "<script" not in out
@@ -430,34 +515,40 @@ def test_html_sanitizer_blocks_scripts():
 
 def test_harness_median_helpers():
     from evaluator.harness import _median, _median_ragas
+
     assert _median([1, 3, 2]) == 2
     assert _median([]) is None
-    med = _median_ragas([
-        {"ragas": {"faithfulness": 4, "answer_relevancy": 2}},
-        {"ragas": {"faithfulness": 2, "answer_relevancy": 4}},
-    ])
+    med = _median_ragas(
+        [
+            {"ragas": {"faithfulness": 4, "answer_relevancy": 2}},
+            {"ragas": {"faithfulness": 2, "answer_relevancy": 4}},
+        ]
+    )
     assert med["faithfulness"] == 3
     assert med["answer_relevancy"] == 3
 
 
 def test_citations_exact_loose_unverified():
     from evaluator.scorers.citations import check_citations
+
     answer = '正常引用：「往生堂第七十七代堂主」；宽松引用："摩拉克斯岩王帝君"；普通引用：「完全不存在的内容」。'
-    contexts = '往生堂第七十七代堂主是钟离。摩拉克斯，岩王帝君。'
+    contexts = "往生堂第七十七代堂主是钟离。摩拉克斯，岩王帝君。"
     out = check_citations(answer, contexts)
     assert out["exact_verified"] >= 1
     assert "摩拉克斯岩王帝君" in out["loose_verified"]
     assert "完全不存在的内容" in out["unverified"]
     assert out["passed"] is False
 
-    meta = check_citations('答案未收录：「该内容未收录」', '无关上下文')
+    meta = check_citations("答案未收录：「该内容未收录」", "无关上下文")
     assert meta["total"] == 0
     assert meta["passed"] is True
 
 
 def test_ragas_mocked_judge():
     from unittest import mock
+
     from evaluator.scorers import judge, ragas
+
     with mock.patch.object(judge, "call_judge_scores", return_value={"median": 4}):
         assert ragas.score_faithfulness("答案", "上下文") == 4
         assert ragas.score_answer_relevancy("答案", "问题") == 4
@@ -468,7 +559,8 @@ def test_ragas_mocked_judge():
     assert ragas.score_context_precision("", "问题") == 0
     assert ragas.score_context_recall("上下文", "") == 0
     with mock.patch.object(
-        judge, "call_judge_scores",
+        judge,
+        "call_judge_scores",
         side_effect=judge.JudgeUnavailableError("test", "boom"),
     ):
         assert ragas.score_faithfulness("答案", "上下文") is None
@@ -476,6 +568,7 @@ def test_ragas_mocked_judge():
 
 def test_rate_limit_sliding_window():
     from fastapi import HTTPException
+
     from app.services.rate_limit import _SlidingWindowLimiter, rate_limit
 
     limiter = _SlidingWindowLimiter()
@@ -503,13 +596,19 @@ def test_db_bridge_build_case_and_run():
     import json
     import shutil
     from pathlib import Path
+
     from evaluator.db_bridge import build_case_result, build_run_record
 
     row = {
-        "id": "Q1", "question": "q", "agent_status": "ok", "answer": "钟离",
+        "id": "Q1",
+        "question": "q",
+        "agent_status": "ok",
+        "answer": "钟离",
         "must_contain_result": {"passed": True},
         "must_not_contain_result": {"passed": True},
-        "keyword_passed": True, "elapsed": 1.5, "tool_count": 1,
+        "keyword_passed": True,
+        "elapsed": 1.5,
+        "tool_count": 1,
         "ragas": {"faithfulness": 5},
     }
     case = {"id": "Q1", "question": "q"}
@@ -524,11 +623,18 @@ def test_db_bridge_build_case_and_run():
     try:
         (run_dir / "results").mkdir(parents=True, exist_ok=True)
         cases_path.write_text(json.dumps({"questions": [case]}, ensure_ascii=False), encoding="utf-8")
-        (run_dir / "manifest.json").write_text(json.dumps({
-            "run_id": "test-db-run", "adapter": "genshin",
-            "evalset_file": str(cases_path.resolve()),
-            "created_at": "2026-01-01T00:00:00",
-        }, ensure_ascii=False), encoding="utf-8")
+        (run_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "test-db-run",
+                    "adapter": "genshin",
+                    "evalset_file": str(cases_path.resolve()),
+                    "created_at": "2026-01-01T00:00:00",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         (run_dir / "results" / "q_Q1.json").write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
         record = build_run_record(run_dir, name="test")
         assert record.run_id == "test-db-run"
@@ -541,6 +647,7 @@ def test_db_bridge_build_case_and_run():
 
 def test_qwen_client_helpers(monkeypatch):
     from app.services.qwen_client import get_qwen_endpoints, is_allowed_llm_endpoint, mask_key
+
     assert mask_key("sk-1234567890abcdef") == "sk-123...cdef"
     assert mask_key("short") == "***"
     assert is_allowed_llm_endpoint("https://dashscope.aliyuncs.com") is True
@@ -557,6 +664,7 @@ def test_qwen_client_helpers(monkeypatch):
 
 def test_judge_pure_helpers():
     from evaluator.scorers import judge
+
     assert judge.redact_sensitive("sk-abcdef1234567890") == "sk-abcd***"
     assert "Bearer ***" in judge.redact_sensitive("Bearer abcdefghijklmnop")
     assert "api_key=***" in judge.redact_sensitive("api_key=abcdef12345678")
@@ -578,6 +686,7 @@ def test_judge_pure_helpers():
 
 def test_keywords_literal_and_case_variants():
     from evaluator.scorers.keywords import check_case_keywords, check_must_contain, check_must_not_contain
+
     assert check_must_contain("钟离", ["钟离"])["passed"] is True
     assert check_must_contain("没有钟离", ["钟离"])["passed"] is False
     assert check_must_contain("钟离", [{"text": "钟离"}])["hit"] == ["钟离"]
@@ -602,8 +711,15 @@ def test_keywords_literal_and_case_variants():
 
 def test_score_case_manual_mode():
     from unittest import mock
+
     from evaluator.scorers import score_case
-    with mock.patch("evaluator.scorers.ragas.score_faithfulness", return_value=5),          mock.patch("evaluator.scorers.ragas.score_answer_relevancy", return_value=4),          mock.patch("evaluator.scorers.ragas.score_context_precision", return_value=3),          mock.patch("evaluator.scorers.ragas.score_context_recall", return_value=2):
+
+    with (
+        mock.patch("evaluator.scorers.ragas.score_faithfulness", return_value=5),
+        mock.patch("evaluator.scorers.ragas.score_answer_relevancy", return_value=4),
+        mock.patch("evaluator.scorers.ragas.score_context_precision", return_value=3),
+        mock.patch("evaluator.scorers.ragas.score_context_recall", return_value=2),
+    ):
         result = score_case(
             case={"question": "q", "reference_answer": "r", "eval_mode": "manual"},
             answer="答案内容",
@@ -618,7 +734,9 @@ def test_score_case_manual_mode():
 
 def test_subprocess_env_kb_sanitization(monkeypatch):
     from pathlib import Path
+
     import app.services.subprocess_env as se
+
     root = Path("quality/reports/test_subprocess_project")
     root.mkdir(parents=True, exist_ok=True)
     (root / "kb_vectors_m3").mkdir(exist_ok=True)
@@ -645,7 +763,9 @@ def test_subprocess_env_kb_sanitization(monkeypatch):
 def test_source_snapshot_compare(monkeypatch):
     import shutil
     from pathlib import Path
+
     import app.services.source_snapshot as ss
+
     root = Path("quality/reports/test_source_snapshot")
     shutil.rmtree(root, ignore_errors=True)
     try:
@@ -679,6 +799,7 @@ def test_source_snapshot_compare(monkeypatch):
 
 def test_judge_http_paths(monkeypatch):
     from unittest import mock
+
     from evaluator.scorers import judge
 
     class Resp:
@@ -734,6 +855,7 @@ def test_judge_http_paths(monkeypatch):
 
 def test_judge_scores_and_cache(monkeypatch):
     from pathlib import Path
+
     from evaluator.scorers import judge
 
     monkeypatch.setattr(judge, "_JUDGE_SAMPLES", [])

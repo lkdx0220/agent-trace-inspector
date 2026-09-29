@@ -6,6 +6,7 @@
 
 本模块只做读取，绝不写回原项目；读取失败时返回空字符串，调用方应自行降级。
 """
+
 from __future__ import annotations
 
 from pathlib import Path

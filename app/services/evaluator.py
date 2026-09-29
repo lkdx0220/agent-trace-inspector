@@ -7,6 +7,7 @@
 3. 路由匹配（expected_route）
 4. 从 Trace 提取耗时、工具次数等指标
 """
+
 from __future__ import annotations
 
 import json
@@ -23,21 +24,25 @@ from schemas.eval import RunCaseResult, TestCase
 
 def _collect_tools_from_trace(trace: Dict[str, Any]) -> List[str]:
     tools = []
+
     def walk(span):
         if span.get("span_type") == "tool" and span.get("name"):
             tools.append(span["name"])
         for child in span.get("children", []):
             walk(child)
+
     walk(trace.get("root_span") or {})
     return tools
 
 
 def _collect_metrics_from_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
     spans = []
+
     def walk(s):
         spans.append(s)
         for c in s.get("children", []):
             walk(c)
+
     walk(trace.get("root_span") or {})
     tools = [s for s in spans if s.get("span_type") == "tool"]
     llms = [s for s in spans if s.get("span_type") in ("llm", "answer")]
@@ -52,7 +57,7 @@ def _strip_negation(text: str, keyword: str) -> bool:
     idx = text.find(keyword)
     if idx == -1:
         return False
-    prefix = text[max(0, idx - 6):idx]
+    prefix = text[max(0, idx - 6) : idx]
     negations = ["不认为", "并非", "并不", "不是", "没有", "否认", "否定", "绝非", "不可能"]
     for neg in negations:
         if neg in prefix:
@@ -65,11 +70,32 @@ def _strip_negation(text: str, keyword: str) -> bool:
 # 避免 LLM 语义裁判把近似但不等同的内容误判为命中。
 SEMANTIC_ALLOWED_KEYWORDS = {
     # 防幻觉/未收录类
-    "未收录", "无法回答", "未明确", "作者",
+    "未收录",
+    "无法回答",
+    "未明确",
+    "作者",
     # 通用行为/概念类
-    "喝酒", "自由", "守护", "现实", "见证", "从容", "命运",
-    "接纳", "承认过去", "童话", "备份", "抛弃", "人类", "扮演",
-    "实力", "胜利者", "对立", "环形", "塔楼", "开场动画", "愿景",
+    "喝酒",
+    "自由",
+    "守护",
+    "现实",
+    "见证",
+    "从容",
+    "命运",
+    "接纳",
+    "承认过去",
+    "童话",
+    "备份",
+    "抛弃",
+    "人类",
+    "扮演",
+    "实力",
+    "胜利者",
+    "对立",
+    "环形",
+    "塔楼",
+    "开场动画",
+    "愿景",
 }
 
 # 这些禁止词不能只靠裸词字符串命中：
@@ -173,7 +199,9 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str], project_path:
     return []
 
 
-def semantic_forbidden_batch_check(question: str, answer: str, keywords: List[str], project_path: Optional[str] = None) -> List[str]:
+def semantic_forbidden_batch_check(
+    question: str, answer: str, keywords: List[str], project_path: Optional[str] = None
+) -> List[str]:
     """用轻量 LLM 判断“禁止词”是否属于简化标签式违规。
 
     与 must_contain 的语义兜底相反：这里的关键词是禁止词，不能裸词命中就判违规。
@@ -313,8 +341,7 @@ def _evaluate_forbidden(
     # 需要再问一次语义裁判，区分“简化标签式定性”与“复述原文设定”。
     reasons: List[str] = []
     semantic_forbidden_candidates = [
-        kw for kw in must_not_contain
-        if kw and kw in SEMANTIC_FORBIDDEN_KEYWORDS and _strip_negation(answer or "", kw)
+        kw for kw in must_not_contain if kw and kw in SEMANTIC_FORBIDDEN_KEYWORDS and _strip_negation(answer or "", kw)
     ]
     semantic_forbidden_violations = set(
         semantic_forbidden_batch_check(question, answer or "", semantic_forbidden_candidates, project_path)
@@ -385,12 +412,14 @@ def evaluate_keywords(answer: str, case: TestCase, project_path: Optional[str] =
         }
     ]
     for alt in case.alternatives:
-        variants.append({
-            "name": alt.name or f"备选答案{len(variants)}",
-            "must_contain": alt.must_contain or [],
-            "must_not_contain": alt.must_not_contain or [],
-            "match_mode": alt.match_mode or "all",
-        })
+        variants.append(
+            {
+                "name": alt.name or f"备选答案{len(variants)}",
+                "must_contain": alt.must_contain or [],
+                "must_not_contain": alt.must_not_contain or [],
+                "match_mode": alt.match_mode or "all",
+            }
+        )
 
     variant_results = []
     for v in variants:
@@ -466,7 +495,11 @@ def check_prompt_compliance(trace: Dict[str, Any], project_path: Optional[str] =
         return {"passed": None, "violations": [], "evidence": "trace 中缺少 plan 事件，无法判断是否违反工具调用规则"}
 
     if any("tool_skip_reason" in text for text in plans):
-        return {"passed": True, "violations": [], "evidence": "未调用工具但执行报告包含 tool_skip_reason，属于系统提示词允许的豁免场景"}
+        return {
+            "passed": True,
+            "violations": [],
+            "evidence": "未调用工具但执行报告包含 tool_skip_reason，属于系统提示词允许的豁免场景",
+        }
 
     return {
         "passed": False,
@@ -475,7 +508,9 @@ def check_prompt_compliance(trace: Dict[str, Any], project_path: Optional[str] =
     }
 
 
-def evaluate_trace_for_case(case: TestCase, trace: Optional[Dict[str, Any]], project_path: Optional[str] = None) -> RunCaseResult:
+def evaluate_trace_for_case(
+    case: TestCase, trace: Optional[Dict[str, Any]], project_path: Optional[str] = None
+) -> RunCaseResult:
     result = RunCaseResult(case_id=case.case_id, question=case.question)
 
     if trace is None:

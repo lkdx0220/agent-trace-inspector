@@ -10,6 +10,7 @@ Phase 6 改动：
 - 在进程内复用 exporter.build_trace_from_result 生成真实 Trace（含 trace_events），
   放进 raw.trace，供确定性检查（工具/路由/提示词合规）和 DB bridge 使用。
 """
+
 from __future__ import annotations
 
 import io
@@ -33,7 +34,9 @@ def _case_dir() -> str:
     return os.path.join(workspace_dir(), "CASE-原神剧情助手-修改用")
 
 
-def _trace_from_result(result: Dict[str, Any], question: str, started_at: datetime, case_dir: str, events: List[Dict[str, Any]]):
+def _trace_from_result(
+    result: Dict[str, Any], question: str, started_at: datetime, case_dir: str, events: List[Dict[str, Any]]
+):
     """复用导出器的 Trace 构建逻辑，返回 Trace 或 None。"""
     try:
         from exporter.genshin_exporter import (
@@ -60,17 +63,21 @@ def _tool_payload_from_trace(trace: Any) -> List[Dict[str, Any]]:
     from evaluator.scorers.deterministic import walk_spans
 
     payload: List[Dict[str, Any]] = []
-    for span in walk_spans(trace.root_span.model_dump(mode="json") if hasattr(trace.root_span, "model_dump") else trace.root_span):
+    for span in walk_spans(
+        trace.root_span.model_dump(mode="json") if hasattr(trace.root_span, "model_dump") else trace.root_span
+    ):
         if span.get("span_type") != "tool":
             continue
-        payload.append({
-            "name": span.get("name") or "?",
-            "status": span.get("status") or "success",
-            "args": span.get("tool_args") or {},
-            "result_preview": str(span.get("result_preview") or "")[:300],
-            "result_length": span.get("result_length") or len(str(span.get("result_full") or "")),
-            "result_full": str(span.get("result_full") or span.get("result_preview") or ""),
-        })
+        payload.append(
+            {
+                "name": span.get("name") or "?",
+                "status": span.get("status") or "success",
+                "args": span.get("tool_args") or {},
+                "result_preview": str(span.get("result_preview") or "")[:300],
+                "result_length": span.get("result_length") or len(str(span.get("result_full") or "")),
+                "result_full": str(span.get("result_full") or span.get("result_preview") or ""),
+            }
+        )
     return payload
 
 
@@ -83,14 +90,16 @@ def _tool_payload_from_messages(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             content = msg.content if hasattr(msg, "content") else str(msg)
             name = msg.name if hasattr(msg, "name") else "unknown"
             if content and len(content) > 10:
-                payload.append({
-                    "name": name,
-                    "status": "success",
-                    "args": {},
-                    "result_preview": str(content)[:300],
-                    "result_length": len(str(content)),
-                    "result_full": str(content),
-                })
+                payload.append(
+                    {
+                        "name": name,
+                        "status": "success",
+                        "args": {},
+                        "result_preview": str(content)[:300],
+                        "result_length": len(str(content)),
+                        "result_full": str(content),
+                    }
+                )
     return payload
 
 
@@ -105,6 +114,7 @@ def _load_agent(case_dir: str) -> Tuple[Any, Any, str]:
     sys.stdout = io.StringIO()
     try:
         from genshin_story_agent import create_agent_workflow
+
         try:
             import app.trace_recorder as tracer
         except Exception:
@@ -153,7 +163,9 @@ def _enable_tracer(tracer: Any, events: List[Dict[str, Any]]) -> Any:
         return None
 
 
-def _invoke_agent(agent: Any, state: Dict[str, Any], tracer: Any) -> Tuple[Optional[Dict[str, Any]], str, float, float, datetime]:
+def _invoke_agent(
+    agent: Any, state: Dict[str, Any], tracer: Any
+) -> Tuple[Optional[Dict[str, Any]], str, float, float, datetime]:
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
     started_at = datetime.now().astimezone()
@@ -183,13 +195,15 @@ def _build_tool_payload(trace_tools: List[Dict[str, Any]]) -> Tuple[List[str], L
         full = item.pop("result_full", "")
         if full and len(full) > 10:
             tool_contents.append(f"[{item['name']}]\n{full}")
-        tool_trace.append({
-            "name": item.get("name"),
-            "status": item.get("status"),
-            "args": item.get("args") or {},
-            "result_preview": item.get("result_preview") or "",
-            "result_length": item.get("result_length") or 0,
-        })
+        tool_trace.append(
+            {
+                "name": item.get("name"),
+                "status": item.get("status"),
+                "args": item.get("args") or {},
+                "result_preview": item.get("result_preview") or "",
+                "result_length": item.get("result_length") or 0,
+            }
+        )
     return tool_contents, tool_trace
 
 

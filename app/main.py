@@ -28,6 +28,8 @@ async def add_no_cache(request, call_next):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     return response
+
+
 app.include_router(traces.router)
 app.include_router(eval_router.router)
 app.include_router(doctor_router.router)

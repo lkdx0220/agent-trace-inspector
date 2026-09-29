@@ -12,6 +12,7 @@
 input → routing → planning → knowledge_gap → query_alias → recall_snippet
       → answer_composition → answer_contamination → evaluator → version
 """
+
 from __future__ import annotations
 
 import json
@@ -42,16 +43,30 @@ STAGE_ORDER: List[Tuple[str, str, str, str]] = [
     ("LO-STG-02", "stage_routing", "路由阶段审计", "route 事件的 intent_labels / injected_tools 与当前路由硬规则对照"),
     ("LO-STG-03", "stage_planning", "规划阶段审计", "plan 文本、工具意图、tool_call_names、重试与豁免原因"),
     ("LO-STG-04", "stage_tool_execution", "工具执行审计", "实际 tool span 的入参、状态、返回长度、not_found/error"),
-    ("LO-STG-05", "stage_knowledge_truth", "知识库真值核对", "逐关键词核对工具返回/最终答案/知识库检索/原始数据/别名映射"),
+    (
+        "LO-STG-05",
+        "stage_knowledge_truth",
+        "知识库真值核对",
+        "逐关键词核对工具返回/最终答案/知识库检索/原始数据/别名映射",
+    ),
     ("LO-STG-06", "stage_answer", "回答阶段审计", "最终答案与工具返回的重合度、短路串、禁词来源"),
     ("LO-STG-07", "stage_version", "版本快照核对", "Trace 源码快照与当前工作区的文件哈希/git 状态对比"),
     ("LO-STG-08", "stage_evaluator", "评测器一致性审计", "从 raw Trace 独立重算，发现评测器漏报/误报"),
 ]
 
 CONSISTENCY_KINDS = {
-    "routing_failure", "plan_output_failure", "knowledge_gap", "query_alias_failure",
-    "recall_snippet_failure", "answer_composition", "answer_contamination",
-    "prompt_violation", "alias_mapping", "evaluator_error", "version_unknown", "other",
+    "routing_failure",
+    "plan_output_failure",
+    "knowledge_gap",
+    "query_alias_failure",
+    "recall_snippet_failure",
+    "answer_composition",
+    "answer_contamination",
+    "prompt_violation",
+    "alias_mapping",
+    "evaluator_error",
+    "version_unknown",
+    "other",
 }
 
 
@@ -64,17 +79,19 @@ def generate_pipeline_orders(
     """固定 8 阶段检查单。所有病例永远执行同一套阶段，不再按症状临时生成。"""
     orders: List[Dict[str, Any]] = []
     for oid, category, title, why in STAGE_ORDER:
-        orders.append({
-            "id": oid,
-            "category": category,
-            "title": title,
-            "question": why,
-            "tool": "run_stage",
-            "params": {},
-            "why": why,
-            "evidence_type": category,
-            "required": True,
-        })
+        orders.append(
+            {
+                "id": oid,
+                "category": category,
+                "title": title,
+                "question": why,
+                "tool": "run_stage",
+                "params": {},
+                "why": why,
+                "evidence_type": category,
+                "required": True,
+            }
+        )
     return orders
 
 
@@ -99,14 +116,16 @@ def _tool_calls_signal(trace: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     calls = []
     for s in spans:
         full = s.get("result_full") or s.get("result_preview") or ""
-        calls.append({
-            "span_id": s.get("span_id"),
-            "name": s.get("name"),
-            "status": s.get("status"),
-            "args": s.get("tool_args") or {},
-            "result_length": s.get("result_length"),
-            "preview": str(full)[:300],
-        })
+        calls.append(
+            {
+                "span_id": s.get("span_id"),
+                "name": s.get("name"),
+                "status": s.get("status"),
+                "args": s.get("tool_args") or {},
+                "result_length": s.get("result_length"),
+                "preview": str(full)[:300],
+            }
+        )
     return calls
 
 
@@ -216,9 +235,9 @@ def _stage_tool_execution(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         "zero_tool_no_skip": len(calls) == 0,
     }
     summary = (
-        f"实际工具 span {len(calls)} 个；" +
-        ("；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用") +
-        f"；not_found {len(not_found)} 个，error {len(errors)} 个"
+        f"实际工具 span {len(calls)} 个；"
+        + ("；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用")
+        + f"；not_found {len(not_found)} 个，error {len(errors)} 个"
     )
     return summary, data
 
@@ -261,13 +280,11 @@ def _knowledge_probes(
     raw_keywords: List[str],
     char_terms: List[str],
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    kb_probe = knowledge_probe_batch(project_path, queries, top_k=5) if queries else {"ok": True, "data": {"queries": {}}}
-    raw_probe = raw_kb_contains_multi(project_path, raw_keywords) if raw_keywords else {"ok": True, "data": {}}
-    alias_probe = (
-        inspect_aliases_multi(project_path, char_terms)
-        if char_terms
-        else {"ok": True, "data": {}}
+    kb_probe = (
+        knowledge_probe_batch(project_path, queries, top_k=5) if queries else {"ok": True, "data": {"queries": {}}}
     )
+    raw_probe = raw_kb_contains_multi(project_path, raw_keywords) if raw_keywords else {"ok": True, "data": {}}
+    alias_probe = inspect_aliases_multi(project_path, char_terms) if char_terms else {"ok": True, "data": {}}
     return kb_probe, raw_probe, alias_probe
 
 
@@ -337,26 +354,34 @@ def _knowledge_not_found_results(
         term = _first_str_arg(c.get("args"))
         raw_entry = raw_data.get(term) or {}
         alias_entry = alias_data.get(term) or {}
-        nf_results.append({
-            "tool_name": c.get("name"),
-            "term": term,
-            "raw_contains": bool(raw_entry.get("contains")),
-            "raw_hits": raw_entry.get("hits") or [],
-            "alias_canonical": alias_entry.get("canonical"),
-            "alias_variants": alias_entry.get("variants") or [],
-        })
+        nf_results.append(
+            {
+                "tool_name": c.get("name"),
+                "term": term,
+                "raw_contains": bool(raw_entry.get("contains")),
+                "raw_hits": raw_entry.get("hits") or [],
+                "alias_canonical": alias_entry.get("canonical"),
+                "alias_variants": alias_entry.get("variants") or [],
+            }
+        )
     return nf_results
 
 
 def _knowledge_summary(keyword_results: Dict[str, Any], forbidden_results: Dict[str, Any]) -> str:
-    missing_summary = "；".join(
-        f"{kw}(tool={r['where'].get('tool_results')},answer={r['where'].get('final_answer')},kb={r.get('kb_hit')},raw={r.get('raw_contains')})"
-        for kw, r in keyword_results.items()
-    ) or "无缺失词"
-    forbidden_summary = "；".join(
-        f"{kw}(answer={r['where'].get('final_answer')},tool={r['where'].get('tool_results')},prompt={r.get('prompt_current_contains')})"
-        for kw, r in forbidden_results.items()
-    ) or "无禁词"
+    missing_summary = (
+        "；".join(
+            f"{kw}(tool={r['where'].get('tool_results')},answer={r['where'].get('final_answer')},kb={r.get('kb_hit')},raw={r.get('raw_contains')})"
+            for kw, r in keyword_results.items()
+        )
+        or "无缺失词"
+    )
+    forbidden_summary = (
+        "；".join(
+            f"{kw}(answer={r['where'].get('final_answer')},tool={r['where'].get('tool_results')},prompt={r.get('prompt_current_contains')})"
+            for kw, r in forbidden_results.items()
+        )
+        or "无禁词"
+    )
     return f"知识库真值核对完成。缺失词: {missing_summary}。禁词: {forbidden_summary}"
 
 
@@ -383,7 +408,9 @@ def _stage_knowledge_truth(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 
     plan_prompt_text, answer_prompt_text = _knowledge_prompt_texts(project_path)
     keyword_results = _knowledge_keyword_results(missing, trace, answer, question, kb_probe, kb_queries, raw_data)
-    forbidden_results = _knowledge_forbidden_results(forbidden, trace, answer, raw_data, plan_prompt_text, answer_prompt_text)
+    forbidden_results = _knowledge_forbidden_results(
+        forbidden, trace, answer, raw_data, plan_prompt_text, answer_prompt_text
+    )
     nf_results = _knowledge_not_found_results(not_found_tools, raw_data, alias_data)
 
     data = {
@@ -403,8 +430,10 @@ def _stage_answer(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     answer = str(result.get("answer") or "")
     corpus = _tool_text(collect_tool_spans(trace))
     if corpus and answer:
+
         def grams(s: str) -> set:
-            return set(s[i:i + 4] for i in range(max(0, len(s) - 3)))
+            return set(s[i : i + 4] for i in range(max(0, len(s) - 3)))
+
         overlap = grams(answer) & grams(corpus)
         ratio = len(overlap) / max(1, len(grams(answer)))
     else:
@@ -581,11 +610,13 @@ def _apply_fact_knowledge_truth(sheet: Dict[str, Any], data: Dict[str, Any]) -> 
             sheet["prompt_current_contains"][kw] = True
         if where.get("final_answer") and (where.get("tool_results") or r.get("prompt_current_contains")):
             sheet["contamination_source_found"] = True
-    for item in (data.get("not_found_results") or []):
+    for item in data.get("not_found_results") or []:
         term = str(item.get("term") or "")
         if not term:
             continue
-        sheet["alias_map_contains"][term] = bool(item.get("alias_canonical")) or len(item.get("alias_variants") or []) > 1
+        sheet["alias_map_contains"][term] = (
+            bool(item.get("alias_canonical")) or len(item.get("alias_variants") or []) > 1
+        )
         sheet["raw_data_contains"][term] = bool(item.get("raw_contains"))
 
 
@@ -647,6 +678,7 @@ def build_fact_sheet(
         sheet["actual_tools"] = [str(x) for x in (result.get("actual_tools") or [])]
     return sheet
 
+
 def _missing_keywords(sheet: Dict[str, Any], must_contain: List[str]) -> List[str]:
     missing: List[str] = []
     for kw in must_contain:
@@ -699,13 +731,20 @@ def _rule_routing(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[s
     )
     state["chain"].append("STG-02 routing: 失败（必需工具未暴露）")
     return _resolve_result(
-        state, "routing", "routing_failure", "路由阶段未暴露任务/剧情查询工具",
-        root, ["LO-STG-02", "LO-STG-07"], "intent_router.py",
+        state,
+        "routing",
+        "routing_failure",
+        "路由阶段未暴露任务/剧情查询工具",
+        root,
+        ["LO-STG-02", "LO-STG-07"],
+        "intent_router.py",
         "确保任务/剧情元数据类问题的确定性硬规则先于 LLM 路由结果执行，并强制并入 D 组工具；为 F1 类“角色的传说任务叫什么名字”问题做路由级回归用例。",
     )
 
 
-def _rule_plan_output(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _rule_plan_output(
+    fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     plan_intents = [str(x) for x in (fact_sheet.get("plan_intents") or [])]
     actual = fact_sheet.get("actual_tools") or []
     if actual or not plan_intents:
@@ -718,13 +757,20 @@ def _rule_plan_output(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Di
         "这是 Planner 的文本推理与结构化 tool_calls 输出脱节，属于规划阶段失败。"
     )
     return _resolve_result(
-        state, "planning", "plan_output_failure", "Planner 文本意图未转化为结构化工具调用",
-        root, ["LO-STG-03", "LO-STG-04"], "app/agent/nodes.py",
+        state,
+        "planning",
+        "plan_output_failure",
+        "Planner 文本意图未转化为结构化工具调用",
+        root,
+        ["LO-STG-03", "LO-STG-04"],
+        "app/agent/nodes.py",
         "加强 plan 阶段 tool_calls 的结构化输出校验：文本层判定需要工具时强制重试直到产出 tool_calls；重试后仍为空则走明确熔断路径，并在执行报告中显式记录 tool_skip_reason。",
     )
 
 
-def _rule_knowledge_gap(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _rule_knowledge_gap(
+    fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     missing_kws = state["missing_kws"]
     if not missing_kws:
         return None
@@ -732,14 +778,21 @@ def _rule_knowledge_gap(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: 
     kb_contains = fact_sheet.get("kb_probe_contains") or {}
     if not all(raw_contains.get(kw) is False and kb_contains.get(kw) is False for kw in missing_kws):
         return None
-    state["chain"].extend(["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-05 knowledge: 失败（原始数据与检索均未命中）"])
+    state["chain"].extend(
+        ["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-05 knowledge: 失败（原始数据与检索均未命中）"]
+    )
     root = (
         f"缺少必须包含词 {missing_kws}：这些词在本次 Trace 工具返回、当前知识库检索、核心原始数据文件中均未出现。"
         "证据支持“知识库原始数据确实缺该信息”，但只能覆盖当前检索口径与核心数据文件，不能证明全部历史版本。"
     )
     return _resolve_result(
-        state, "knowledge", "knowledge_gap", "知识库原始数据缺少评测要求的信息",
-        root, ["LO-STG-05", "LO-STG-07"], "content_data/",
+        state,
+        "knowledge",
+        "knowledge_gap",
+        "知识库原始数据缺少评测要求的信息",
+        root,
+        ["LO-STG-05", "LO-STG-07"],
+        "content_data/",
         "先扩充知识库原始数据（或确认规范名称/别名口径），再验证检索与回答链路；若数据在非核心文件中存在，应把该文件纳入数据目录。",
         "medium",
     )
@@ -755,20 +808,36 @@ def _rule_alias(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str
             if isinstance(v, str) and v:
                 term = str(v)
                 break
-        if term and fact_sheet.get("alias_map_contains", {}).get(term) and fact_sheet.get("raw_data_contains", {}).get(term):
+        if (
+            term
+            and fact_sheet.get("alias_map_contains", {}).get(term)
+            and fact_sheet.get("raw_data_contains", {}).get(term)
+        ):
             alias_fail = {"term": term, "tool": nf.get("name")}
             break
     if not alias_fail:
         return None
-    state["chain"].extend(["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-04 tool: 出现 not_found", "STG-05 knowledge: 别名可解析且原始数据存在"])
+    state["chain"].extend(
+        [
+            "STG-02 routing: 通过",
+            "STG-03 planning: 通过",
+            "STG-04 tool: 出现 not_found",
+            "STG-05 knowledge: 别名可解析且原始数据存在",
+        ]
+    )
     root = (
         f"工具 {alias_fail['tool']} 查询「{alias_fail['term']}」返回 not_found；"
         f"当前别名映射能解析到规范名，且知识库原始数据中存在该词条。"
         "属于查询词未做别名规范化的失败，而不是数据缺失。"
     )
     return _resolve_result(
-        state, "alias", "query_alias_failure", "查询词未做别名/规范名解析",
-        root, ["LO-STG-04", "LO-STG-05"], "character_aliases.py",
+        state,
+        "alias",
+        "query_alias_failure",
+        "查询词未做别名/规范名解析",
+        root,
+        ["LO-STG-04", "LO-STG-05"],
+        "character_aliases.py",
         "在工具入口统一做别名→规范名解析（query_character 已实现，需覆盖其他实体工具）；同时让 plan 阶段对实体查询使用规范名构造查询词。",
     )
 
@@ -784,20 +853,29 @@ def _rule_recall(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[st
     if not recall_kws:
         return None
     kb_hit_kws = [kw for kw in recall_kws if kb_contains.get(kw) is True]
-    state["chain"].extend(["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-05 knowledge: 失败（原始数据在但工具未返回）"])
+    state["chain"].extend(
+        ["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-05 knowledge: 失败（原始数据在但工具未返回）"]
+    )
     root = (
         f"缺少必须包含词 {recall_kws}：知识库原始数据中存在，"
         f"其中当前检索已命中 {kb_hit_kws or '无'}，但本次 Trace 的工具返回均未包含这些关键词。"
         "根因在查询词构造或召回切片（snippet 未覆盖关键段落），不是知识库缺失。"
     )
     return _resolve_result(
-        state, "recall", "recall_snippet_failure", "查询/召回未把原始数据中的关键段落暴露给回答阶段",
-        root, ["LO-STG-04", "LO-STG-05"], "app/retrieval.py",
+        state,
+        "recall",
+        "recall_snippet_failure",
+        "查询/召回未把原始数据中的关键段落暴露给回答阶段",
+        root,
+        ["LO-STG-04", "LO-STG-05"],
+        "app/retrieval.py",
         "改善长任务/多段内容的召回完整性：提高结果数、按任务拆分多 snippet、BM25 与向量结果做段落级补齐；plan 阶段对概念类问题增加机制性补充查询。",
     )
 
 
-def _rule_answer_composition(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _rule_answer_composition(
+    fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     missing_kws = state["missing_kws"]
     if not missing_kws:
         return None
@@ -806,19 +884,28 @@ def _rule_answer_composition(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], st
     compose_kws = [kw for kw in missing_kws if tool_contains.get(kw) is True and answer_contains.get(kw) is False]
     if not compose_kws:
         return None
-    state["chain"].extend(["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-06 answer: 失败（工具命中但答案未使用）"])
+    state["chain"].extend(
+        ["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-06 answer: 失败（工具命中但答案未使用）"]
+    )
     root = (
         f"工具返回中已包含 {compose_kws}，但最终答案没有使用这些内容。"
         "回答阶段没有整合已召回的正确信息，属于 answer 阶段失败。"
     )
     return _resolve_result(
-        state, "answer", "answer_composition", "回答阶段未整合工具已返回的正确信息",
-        root, ["LO-STG-05", "LO-STG-06"], "prompts/system/agent_system_v4_answer.txt",
+        state,
+        "answer",
+        "answer_composition",
+        "回答阶段未整合工具已返回的正确信息",
+        root,
+        ["LO-STG-05", "LO-STG-06"],
+        "prompts/system/agent_system_v4_answer.txt",
         "回答提示词要求答案必须覆盖工具返回中的核心事实；对近似对象/拼写纠错后的结果允许按规则整合，而不是直接输出未收录。",
     )
 
 
-def _rule_answer_contamination(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _rule_answer_contamination(
+    fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     forbidden_kws = state["forbidden_kws"]
     if not forbidden_kws:
         return None
@@ -827,7 +914,9 @@ def _rule_answer_contamination(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], 
     contaminated = [kw for kw in forbidden_kws if tool_contains.get(kw) is True or prompt_contains.get(kw) is True]
     if not contaminated:
         return None
-    state["chain"].extend(["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-06 answer: 失败（禁止词进入最终答案）"])
+    state["chain"].extend(
+        ["STG-02 routing: 通过", "STG-03 planning: 通过", "STG-06 answer: 失败（禁止词进入最终答案）"]
+    )
     root = (
         f"禁止词 {contaminated} 出现在最终答案中；"
         f"工具返回命中 {[k for k in contaminated if tool_contains.get(k) is True] or '无'}，"
@@ -835,13 +924,20 @@ def _rule_answer_contamination(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], 
         "答案阶段没有过滤或误用了带污染源的原文内容。"
     )
     return _resolve_result(
-        state, "answer", "answer_contamination", "禁止词经工具/提示词污染进入最终答案",
-        root, ["LO-STG-05", "LO-STG-06"], "prompts/system/agent_system_v4_answer.txt",
+        state,
+        "answer",
+        "answer_contamination",
+        "禁止词经工具/提示词污染进入最终答案",
+        root,
+        ["LO-STG-05", "LO-STG-06"],
+        "prompts/system/agent_system_v4_answer.txt",
         "回答提示词增加范围纪律：只使用题干限定范围内的工具内容；来自其他任务/背景段的专名必须被过滤或替换为中性表达。",
     )
 
 
-def _rule_evaluator_error(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _rule_evaluator_error(
+    fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     if not fact_sheet.get("evaluator_error_detected"):
         return None
     state["chain"].extend(["STG-02..06: 未发现更上游失败", "STG-08 evaluator: 发现评测差异"])
@@ -850,13 +946,20 @@ def _rule_evaluator_error(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state
         "not_found 工具或关键词判定不一致），本次失败可能不是 Agent 行为而是评测器漏报/误报。"
     )
     return _resolve_result(
-        state, "evaluator", "evaluator_error", "评测器判定与 Trace 事实存在差异",
-        root, ["LO-STG-08"], "app/services/evaluator.py",
+        state,
+        "evaluator",
+        "evaluator_error",
+        "评测器判定与 Trace 事实存在差异",
+        root,
+        ["LO-STG-08"],
+        "app/services/evaluator.py",
         "根据 LO-STG-08 的 evaluator_discrepancies 逐条核对评测器规则与 Trace 导出字段，补齐漏报或修正误报。",
     )
 
 
-def _rule_version_unknown(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _rule_version_unknown(
+    fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     version_note = ""
     if not fact_sheet.get("trace_source_snapshot_known"):
         version_note = "Trace 没有源码/提示词版本快照，无法证明当前代码在 Trace 运行时刻生效。"
@@ -867,9 +970,13 @@ def _rule_version_unknown(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state
     state["chain"].append("STG-02..06: 未发现明确的上游确定性失败")
     state["chain"].append("STG-07 version: 无法确定历史版本")
     return _resolve_result(
-        state, "version", "version_unknown", "历史 Trace 版本无法确定",
+        state,
+        "version",
+        "version_unknown",
+        "历史 Trace 版本无法确定",
         "无法定位到输入/路由/规划/工具/知识/回答阶段的确定性失败：" + version_note,
-        ["LO-STG-07", "LO-STG-08"], "",
+        ["LO-STG-07", "LO-STG-08"],
+        "",
         "升级导出器为所有新 Trace 写入 source_snapshot；对旧 Trace 只能按当前版本给通用改进建议，禁止断言旧代码违规。",
         "low",
     )
@@ -878,10 +985,15 @@ def _rule_version_unknown(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state
 def _rule_other(fact_sheet: Dict[str, Any], ctx: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     state["chain"].append("STG-02..08: 未发现上述任一确定性失败")
     return _resolve_result(
-        state, "other", "other", "需要人工复核的未分类失败",
+        state,
+        "other",
+        "other",
+        "需要人工复核的未分类失败",
         "8 个阶段探针均未命中确定性失败模式；需要结合证据人工复核。",
         [oid for oid in fact_sheet.get("stage_summaries", {})],
-        "", "人工复核 LO-STG-01..08 证据后重跑医生。", "low",
+        "",
+        "人工复核 LO-STG-01..08 证据后重跑医生。",
+        "low",
     )
 
 
@@ -917,6 +1029,7 @@ def resolve_cause(fact_sheet: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, 
             return result
     return _rule_other(fact_sheet, ctx, state)
 
+
 def format_pipeline_for_prompt(
     ctx: Dict[str, Any],
     fact_sheet: Dict[str, Any],
@@ -931,25 +1044,44 @@ def format_pipeline_for_prompt(
     sheet_view = {
         k: fact_sheet.get(k)
         for k in (
-            "actual_tools", "plan_intents", "plan_tool_call_names_empty", "answer_short_circuit",
-            "not_found_tools", "evaluator_error_detected", "zero_tool_no_skip",
-            "prompt_trace_version_known", "trace_source_snapshot_known",
-            "prompt_snapshot_clean", "code_snapshot_clean", "trace_version_clean",
-            "routing_event_seen", "routing_hard_rule_hit", "routing_expected_tools",
-            "routing_actual_tools", "routing_missing_required_tools",
-            "tool_output_contains", "final_answer_contains", "kb_probe_contains",
-            "raw_data_contains", "alias_map_contains", "contamination_source_found",
+            "actual_tools",
+            "plan_intents",
+            "plan_tool_call_names_empty",
+            "answer_short_circuit",
+            "not_found_tools",
+            "evaluator_error_detected",
+            "zero_tool_no_skip",
+            "prompt_trace_version_known",
+            "trace_source_snapshot_known",
+            "prompt_snapshot_clean",
+            "code_snapshot_clean",
+            "trace_version_clean",
+            "routing_event_seen",
+            "routing_hard_rule_hit",
+            "routing_expected_tools",
+            "routing_actual_tools",
+            "routing_missing_required_tools",
+            "tool_output_contains",
+            "final_answer_contains",
+            "kb_probe_contains",
+            "raw_data_contains",
+            "alias_map_contains",
+            "contamination_source_found",
         )
     }
     text = "\n".join(stage_lines)
     text += "\n\n【FactSheet（确定性权威事实，LLM 不得改写）】\n" + json.dumps(sheet_view, ensure_ascii=False, indent=2)
     text += "\n\n【CausalResolver 因果梯子判定（权威归因）】\n" + json.dumps(resolution, ensure_ascii=False, indent=2)
-    text += "\n\n【评测结果】\n" + json.dumps({
-        "passed": result.get("passed"),
-        "reasons": result.get("reasons") or [],
-        "prompt_pass": result.get("prompt_pass"),
-        "prompt_violations": result.get("prompt_violations") or [],
-    }, ensure_ascii=False, indent=2)
+    text += "\n\n【评测结果】\n" + json.dumps(
+        {
+            "passed": result.get("passed"),
+            "reasons": result.get("reasons") or [],
+            "prompt_pass": result.get("prompt_pass"),
+            "prompt_violations": result.get("prompt_violations") or [],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
     text += "\n\n【LLM 职责】\n- 归因必须与 CausalResolver 的 conclusion_kind 一致；若确实发现新证据可用 read 工具补充并说明，但不得推翻确定事实。\n- 处方必须给通用机制建议，禁止写死具体题目词。\n- 引用证据 ID 时只能使用 stage 证据 ID 或 EXT ID。"
     if len(text) > max_chars:
         text = text[:max_chars] + "\n...[FactSheet 过长已截断，可用 evidence_view 回看各 LO-STG 证据]"

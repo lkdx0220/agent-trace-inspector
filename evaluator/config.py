@@ -4,6 +4,7 @@
 配置文件是唯一的参数来源：judge 窗口、repeat、阈值、超时、并发都在 config.yaml。
 CLI 参数只做显式覆盖，覆盖后的实际值会写进 manifest。
 """
+
 from __future__ import annotations
 
 import copy

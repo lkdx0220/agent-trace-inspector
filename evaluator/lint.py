@@ -13,6 +13,7 @@
 4. 已废弃题面词（如「万国诸卷拾遗」）提示；
 5. 给 --results 时，统计每个 must_contain 在历史 answer/contexts 里的命中数，0 命中的给提示。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -129,7 +130,9 @@ def _lint_agent_repeat(
     elif stability == "stable" and agent_repeat > 1:
         info.append(f"{qid or label} 标为 stable 但 agent_repeat={agent_repeat}，多跑不额外增加信息")
     elif agent_repeat % 2 == 0:
-        warnings.append(f"{qid or label} agent_repeat={agent_repeat} 为偶数，会出现平票（当前规则平票判不通过），建议用 1 或 3")
+        warnings.append(
+            f"{qid or label} agent_repeat={agent_repeat} 为偶数，会出现平票（当前规则平票判不通过），建议用 1 或 3"
+        )
 
 
 def _lint_criteria_and_lists(q: Dict[str, Any], qid: str, label: str, errors: List[str]) -> None:
@@ -226,8 +229,16 @@ def _lint_keyword_item(
         return
     text, match = normalized
     _lint_keyword_hits(
-        text, match, kind, qid, label, answer, results_cache,
-        warnings, zero_hit, semantic_zero_skipped,
+        text,
+        match,
+        kind,
+        qid,
+        label,
+        answer,
+        results_cache,
+        warnings,
+        zero_hit,
+        semantic_zero_skipped,
     )
 
 
@@ -238,7 +249,12 @@ def _load_lint_cases(cases_path: str) -> Tuple[Optional[Dict[str, Any]], Optiona
         with open(cases_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as exc:
-        return None, {"ok": False, "errors": [f"题集 JSON 解析失败: {type(exc).__name__}: {exc}"], "warnings": [], "info": []}
+        return None, {
+            "ok": False,
+            "errors": [f"题集 JSON 解析失败: {type(exc).__name__}: {exc}"],
+            "warnings": [],
+            "info": [],
+        }
     if not isinstance(data, dict):
         return None, {"ok": False, "errors": ["题集根节点必须是 JSON 对象"], "warnings": [], "info": []}
     return data, None
@@ -250,7 +266,7 @@ def _validate_lint_metadata(
     warnings: List[str],
 ) -> List[Dict[str, Any]]:
     if not data.get("schema_version"):
-        warnings.append("缺少 schema_version，建议补 \"1.0\"")
+        warnings.append('缺少 schema_version，建议补 "1.0"')
     metadata = data.get("metadata")
     if not isinstance(metadata, dict):
         errors.append("缺少 metadata 对象")
@@ -292,8 +308,18 @@ def _lint_questions(
         for kind in ("must_contain", "must_not_contain"):
             for raw in q.get(kind) or []:
                 _lint_keyword_item(
-                    qid, label, kind, raw, answer, results_cache, errors, warnings,
-                    keyword_stats, keyword_unclassified, zero_hit, semantic_zero_skipped,
+                    qid,
+                    label,
+                    kind,
+                    raw,
+                    answer,
+                    results_cache,
+                    errors,
+                    warnings,
+                    keyword_stats,
+                    keyword_unclassified,
+                    zero_hit,
+                    semantic_zero_skipped,
                 )
 
 
@@ -311,7 +337,7 @@ def _build_lint_info(
     if keyword_unclassified:
         warnings.append(
             f"还有 {len(keyword_unclassified)} 个关键词是旧字符串格式，建议迁移为 "
-            "{\"text\":\"...\",\"match\":\"literal|semantic|structural\"}"
+            '{"text":"...","match":"literal|semantic|structural"}'
         )
     if zero_hit:
         warnings.append(f"{len(zero_hit)} 个 must_contain 在历史结果里 answer/contexts 命中均为 0，建议复核")
@@ -348,12 +374,26 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
         results_cache = _load_results(results_dir)
 
     _lint_questions(
-        questions, results_cache, errors, warnings, info,
-        keyword_stats, keyword_unclassified, zero_hit, semantic_zero_skipped,
+        questions,
+        results_cache,
+        errors,
+        warnings,
+        info,
+        keyword_stats,
+        keyword_unclassified,
+        zero_hit,
+        semantic_zero_skipped,
     )
     _build_lint_info(
-        results_dir, questions, results_cache, warnings, info,
-        keyword_stats, keyword_unclassified, zero_hit, semantic_zero_skipped,
+        results_dir,
+        questions,
+        results_cache,
+        warnings,
+        info,
+        keyword_stats,
+        keyword_unclassified,
+        zero_hit,
+        semantic_zero_skipped,
     )
 
     return {

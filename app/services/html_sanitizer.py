@@ -8,6 +8,7 @@
 - a 标签只保留 http/https/mailto/#// 开头的 href；
 - script/style/iframe 等标签连同内容一起丢弃。
 """
+
 from __future__ import annotations
 
 import html
@@ -15,20 +16,64 @@ from html.parser import HTMLParser
 from typing import Dict, List, Optional, Set
 
 ALLOWED_TAGS: Set[str] = {
-    "p", "br", "hr", "strong", "b", "em", "i", "u", "s", "del",
-    "code", "pre", "blockquote",
-    "ul", "ol", "li",
-    "h1", "h2", "h3", "h4", "h5", "h6",
-    "table", "thead", "tbody", "tfoot", "tr", "th", "td",
-    "a", "span", "div", "sup", "sub",
+    "p",
+    "br",
+    "hr",
+    "strong",
+    "b",
+    "em",
+    "i",
+    "u",
+    "s",
+    "del",
+    "code",
+    "pre",
+    "blockquote",
+    "ul",
+    "ol",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "th",
+    "td",
+    "a",
+    "span",
+    "div",
+    "sup",
+    "sub",
 }
 
 VOID_TAGS: Set[str] = {"br", "hr"}
 
 BLOCKED_TAGS: Set[str] = {
-    "script", "style", "iframe", "object", "embed", "link", "meta",
-    "base", "svg", "math", "form", "input", "button", "textarea",
-    "select", "option", "frame", "frameset", "template",
+    "script",
+    "style",
+    "iframe",
+    "object",
+    "embed",
+    "link",
+    "meta",
+    "base",
+    "svg",
+    "math",
+    "form",
+    "input",
+    "button",
+    "textarea",
+    "select",
+    "option",
+    "frame",
+    "frameset",
+    "template",
 }
 
 ALLOWED_ATTRS: Dict[str, Set[str]] = {

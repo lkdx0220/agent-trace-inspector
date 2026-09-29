@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """项目医生 CLI：python run_doctor.py --run run_3054e696 --case R3"""
+
 import argparse
 import json
 import sys
@@ -27,11 +28,17 @@ def main() -> int:
         save_prescription(args.run, args.case, out, model=out.get("model") or "")
 
     report = out.get("report") or {}
-    print(json.dumps({
-        "coverage": out.get("coverage"),
-        "diagnosis": report.get("diagnosis"),
-        "prescriptions": report.get("prescriptions"),
-    }, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {
+                "coverage": out.get("coverage"),
+                "diagnosis": report.get("diagnosis"),
+                "prescriptions": report.get("prescriptions"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 

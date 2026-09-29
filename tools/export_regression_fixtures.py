@@ -9,6 +9,7 @@ tests/test_known_case_regressions.py 会在夹具存在时，用当前 scorers �
     python tools/export_regression_fixtures.py \
         --run-dir runs/c4gate_full26_20260919 --ids F5,R5
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,11 +28,7 @@ def _load_json(path: Path) -> Dict[str, Any]:
 
 def _load_cases(path: Path) -> Dict[str, Dict[str, Any]]:
     data = _load_json(path)
-    return {
-        str(q.get("id")): q
-        for q in data.get("questions") or []
-        if isinstance(q, dict)
-    }
+    return {str(q.get("id")): q for q in data.get("questions") or [] if isinstance(q, dict)}
 
 
 def _is_literal_only(case: Dict[str, Any]) -> bool:

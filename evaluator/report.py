@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """HTML 报告生成：从旧 harness 原样迁移，保持报告结构不变。"""
+
 from __future__ import annotations
 
 import html
@@ -46,7 +47,7 @@ def _render_summary_row(r: Dict) -> str:
     qid = r["id"]
     if "error" in r:
         return (
-            f'<tr class="row-error"><td>{_esc(qid)}</td><td>{_esc(r.get("category",""))}</td>'
+            f'<tr class="row-error"><td>{_esc(qid)}</td><td>{_esc(r.get("category", ""))}</td>'
             f'<td class="td-err">错误: {_esc(r["error"][:60])}</td><td>N/A</td><td>N/A</td><td>-</td></tr>'
         )
 
@@ -55,10 +56,7 @@ def _render_summary_row(r: Dict) -> str:
     ar_s = ragas.get("answer_relevancy", "?")
     cp_s = ragas.get("context_precision", "?")
     cr_s = ragas.get("context_recall", "?")
-    ragas_html = (
-        f'F:{_color_bar(f_s)} A:{_color_bar(ar_s)} '
-        f'P:{_color_bar(cp_s)} R:{_color_bar(cr_s)}'
-    )
+    ragas_html = f"F:{_color_bar(f_s)} A:{_color_bar(ar_s)} P:{_color_bar(cp_s)} R:{_color_bar(cr_s)}"
     if r.get("judge_valid") is False:
         ragas_html = '<span style="color:#e06060">Judge 不可用</span>'
 
@@ -71,9 +69,9 @@ def _render_summary_row(r: Dict) -> str:
     elif mc_ok and mnc_ok:
         mc_str = f'<span style="color:#5cb878">通过 ({_esc("{:.0%}".format(mc.get("hit_rate", 1.0)))})</span>'
     elif not mc_ok:
-        mc_str = f'<span style="color:#e06060">缺: {",".join(_esc(x) for x in mc.get("miss",[])[:3])}</span>'
+        mc_str = f'<span style="color:#e06060">缺: {",".join(_esc(x) for x in mc.get("miss", [])[:3])}</span>'
     else:
-        mc_str = f'<span style="color:#e06060">违规: {",".join(_esc(x) for x in mnc.get("violations",[])[:3])}</span>'
+        mc_str = f'<span style="color:#e06060">违规: {",".join(_esc(x) for x in mnc.get("violations", [])[:3])}</span>'
     # 取票与口径标记：噪声题只看多数票，放宽判据的题分数不可与旧版本横比。
     if int(r.get("repeat") or 1) > 1:
         mc_str += ' <span style="color:#9aa7b8">[{} 票]</span>'.format(_esc(str(r.get("keyword_votes") or "")))
@@ -93,8 +91,8 @@ def _render_summary_row(r: Dict) -> str:
         judge_badge = '<span style="color:#e06060"> | Judge不可用</span>'
     return (
         f'<tr><td><a href="#{_esc(qid)}">{_esc(qid)}</a></td><td>{_esc(r["category"])}</td>'
-        f'<td>{_esc(r["question"][:40])}...</td><td>{ragas_html}</td><td>{mc_str}</td>'
-        f'<td>{time_text}{judge_badge}</td></tr>'
+        f"<td>{_esc(r['question'][:40])}...</td><td>{ragas_html}</td><td>{mc_str}</td>"
+        f"<td>{time_text}{judge_badge}</td></tr>"
     )
 
 
@@ -105,16 +103,18 @@ def _render_card_meta(r: Dict) -> str:
             float(r.get("init_seconds") or 0), float(r.get("agent_seconds") or 0)
         )
     judge_meta = "" if r.get("judge_valid") is not False else " | Judge不可用"
-    return f"""  <div class="meta">{_esc(r["category"])} | {_esc(r.get("difficulty",""))} | {_esc(time_meta)}{_esc(judge_meta)}
-    {f'| {_esc(r.get("tool_count",0))} 次工具调用' if r.get("tool_count") else ""}
-    {f'| {_esc(r.get("eval_mode",""))}' if r.get("eval_mode") == "manual" else ""}
+    return f"""  <div class="meta">{_esc(r["category"])} | {_esc(r.get("difficulty", ""))} | {_esc(time_meta)}{_esc(judge_meta)}
+    {f"| {_esc(r.get('tool_count', 0))} 次工具调用" if r.get("tool_count") else ""}
+    {f"| {_esc(r.get('eval_mode', ''))}" if r.get("eval_mode") == "manual" else ""}
   </div>"""
 
 
 def _render_ragas_section(r: Dict, ragas: Dict) -> str:
     judge_note = ""
     if r.get("judge_valid") is False:
-        judge_note = f'<p class="err">Judge 不可用：{_esc("；".join(r.get("judge_errors") or []))}；该样本 RAGAS 分数无效。</p>'
+        judge_note = (
+            f'<p class="err">Judge 不可用：{_esc("；".join(r.get("judge_errors") or []))}；该样本 RAGAS 分数无效。</p>'
+        )
     trunc = r.get("judge_truncation") or {}
     trunc_note = ""
     if trunc.get("answer") or trunc.get("contexts") or trunc.get("reference"):
@@ -141,20 +141,20 @@ def _render_ragas_section(r: Dict, ragas: Dict) -> str:
 def _render_keyword_section(r: Dict, mc: Dict, mnc: Dict) -> str:
     return f"""  <div class="section">
     <h4>关键词检查 {_dot(mc["passed"] and mnc["passed"])}</h4>
-    <p><strong>must_contain</strong> ({_esc(r.get("match_mode","all"))}): 命中 {_esc("{}/{}".format(len(mc.get("hit", []) ) + len(mc.get("semantic_hit", [])), len(r.get("must_contain_keywords", []))))}
-       {f' | 语义命中: {", ".join(_esc(x) for x in mc.get("semantic_hit",[]))}' if mc.get("semantic_hit") else ""}
-       {f' | 缺失: {", ".join(_esc(x) for x in mc.get("miss",[]))}' if mc.get("miss") else ""}
+    <p><strong>must_contain</strong> ({_esc(r.get("match_mode", "all"))}): 命中 {_esc("{}/{}".format(len(mc.get("hit", [])) + len(mc.get("semantic_hit", [])), len(r.get("must_contain_keywords", []))))}
+       {f" | 语义命中: {', '.join(_esc(x) for x in mc.get('semantic_hit', []))}" if mc.get("semantic_hit") else ""}
+       {f" | 缺失: {', '.join(_esc(x) for x in mc.get('miss', []))}" if mc.get("miss") else ""}
     </p>
-    <p><strong>must_not_contain</strong>: {f'违规: {", ".join(_esc(x) for x in mnc.get("violations",[]))}' if mnc.get("violations") else "未发现违规词"}
+    <p><strong>must_not_contain</strong>: {f"违规: {', '.join(_esc(x) for x in mnc.get('violations', []))}" if mnc.get("violations") else "未发现违规词"}
     </p>
   </div>"""
 
 
 def _render_citation_section(cite: Dict) -> str:
     return f"""  <div class="section">
-    <h4>引用核对 {_dot(cite.get("passed",True))}</h4>
+    <h4>引用核对 {_dot(cite.get("passed", True))}</h4>
     <p>共 {_esc(cite.get("total", 0))} 处引用，{_esc(cite.get("verified", 0))} 处验证通过
-       {f' | 未验证: {", ".join(_esc(x) for x in cite.get("unverified",[]))}' if cite.get("unverified") else ""}
+       {f" | 未验证: {', '.join(_esc(x) for x in cite.get('unverified', []))}" if cite.get("unverified") else ""}
     </p>
   </div>"""
 
@@ -167,7 +167,7 @@ def _render_text_sections(r: Dict, ctx_excerpt: str) -> str:
 
   <div class="section">
     <h4>参考答案</h4>
-    <div class="ref-text">{_esc_br(r.get("reference_answer",""))}</div>
+    <div class="ref-text">{_esc_br(r.get("reference_answer", ""))}</div>
   </div>
 
   <details class="section">
@@ -184,7 +184,7 @@ def _render_text_sections(r: Dict, ctx_excerpt: str) -> str:
 def _render_detail_card(r: Dict) -> str:
     qid = r["id"]
     if "error" in r:
-        return f'<div class="card" id="{_esc(qid)}"><h3>{_esc(qid)}: {_esc(r.get("category",""))}</h3><p class="err">{_esc(r["error"])}</p></div>'
+        return f'<div class="card" id="{_esc(qid)}"><h3>{_esc(qid)}: {_esc(r.get("category", ""))}</h3><p class="err">{_esc(r["error"])}</p></div>'
 
     # 显式先切片再转义，避免后续重构时截断转义后的 HTML 实体。
     ctx_excerpt = (r.get("contexts") or "（无）")[:5000]
@@ -197,6 +197,7 @@ def _render_detail_card(r: Dict) -> str:
 {_render_citation_section(r["citation_result"])}
 {_render_text_sections(r, ctx_excerpt)}
 </div>"""
+
 
 def generate_html(results: List[Dict], output_path: str, judge_model: str = "deepseek-chat"):
     """生成 HTML 评估报告"""
@@ -213,7 +214,7 @@ def generate_html(results: List[Dict], output_path: str, judge_model: str = "dee
 
     cards = "".join(_render_detail_card(r) for r in results)
 
-    html_doc = f'''<!DOCTYPE html>
+    html_doc = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -303,7 +304,7 @@ footer{{text-align:center;padding:20px;color:var(--text-muted);font-size:12px;bo
 </div>
 <footer>原神剧情助手 Golden Test Set 自动化评估 Pipeline</footer>
 </body>
-</html>'''
+</html>"""
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_doc)

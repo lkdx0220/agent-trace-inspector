@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """RAGAS 四维判分：唯一入口，窗口来自 JudgeSettings。"""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -14,10 +15,10 @@ def score_faithfulness(answer: str, contexts: str) -> Optional[int]:
     prompt = f"""评估以下答案是否完全基于提供的「检索上下文」生成，没有编造或添加上下文不存在的信息。
 
 【检索上下文】
-{judge.untrusted("CONTEXTS", contexts[:settings.contexts_chars])}
+{judge.untrusted("CONTEXTS", contexts[: settings.contexts_chars])}
 
 【答案】
-{judge.untrusted("ANSWER", answer[:settings.answer_chars])}
+{judge.untrusted("ANSWER", answer[: settings.answer_chars])}
 
 评分标准（0-5）：
 5分：所有声称都能在上下文中找到原文依据，没有任何编造。
@@ -41,7 +42,7 @@ def score_answer_relevancy(answer: str, question: str) -> Optional[int]:
 {judge.untrusted("QUESTION", question)}
 
 【答案】
-{judge.untrusted("ANSWER", answer[:settings.answer_chars])}
+{judge.untrusted("ANSWER", answer[: settings.answer_chars])}
 
 评分标准（0-5）：
 5分：完全扣题，直接回答了问题，没有无关内容。
@@ -67,7 +68,7 @@ def score_context_precision(contexts: str, question: str) -> Optional[int]:
 {judge.untrusted("QUESTION", question)}
 
 【检索到的内容】
-{judge.untrusted("CONTEXTS", contexts[:settings.contexts_chars])}
+{judge.untrusted("CONTEXTS", contexts[: settings.contexts_chars])}
 
 评分标准（0-5）：
 5分：检索内容精准命中问题要点，包含了回答所需的核心信息。
@@ -93,10 +94,10 @@ def score_context_recall(contexts: str, reference_answer: str) -> Optional[int]:
     prompt = f"""评估以下「检索到的内容」是否覆盖了「参考答案」中的关键事实。
 
 【参考答案】
-{judge.untrusted("REFERENCE", reference_answer[:settings.reference_chars])}
+{judge.untrusted("REFERENCE", reference_answer[: settings.reference_chars])}
 
 【检索到的内容】
-{judge.untrusted("CONTEXTS", contexts[:settings.contexts_chars])}
+{judge.untrusted("CONTEXTS", contexts[: settings.contexts_chars])}
 
 评分标准（0-5）：
 5分：参考答案中的所有关键事实都能在检索内容中找到。

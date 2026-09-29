@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """关键词判分：literal / semantic / structural 三类，及禁止词语义裁判。"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -9,11 +10,32 @@ from evaluator.scorers import judge
 # 只有这些“通用概念/描述词”允许语义兜底；专名/书名/任务名必须精确命中。
 SEMANTIC_ALLOWED_KEYWORDS = {
     # 防幻觉/未收录类
-    "未收录", "无法回答", "未明确", "作者",
+    "未收录",
+    "无法回答",
+    "未明确",
+    "作者",
     # 通用行为/概念类
-    "喝酒", "自由", "守护", "现实", "见证", "从容", "命运",
-    "接纳", "承认过去", "童话", "备份", "抛弃", "人类", "扮演",
-    "实力", "胜利者", "对立", "环形", "塔楼", "开场动画", "愿景",
+    "喝酒",
+    "自由",
+    "守护",
+    "现实",
+    "见证",
+    "从容",
+    "命运",
+    "接纳",
+    "承认过去",
+    "童话",
+    "备份",
+    "抛弃",
+    "人类",
+    "扮演",
+    "实力",
+    "胜利者",
+    "对立",
+    "环形",
+    "塔楼",
+    "开场动画",
+    "愿景",
 }
 
 # 这些禁止词不裸词判违规：可能是复述原文设定（如渊下宫三界观）。
@@ -45,7 +67,7 @@ def _strip_negation(text: str, keyword: str) -> bool:
     idx = text.find(keyword)
     if idx == -1:
         return False
-    prefix = text[max(0, idx - 6):idx]
+    prefix = text[max(0, idx - 6) : idx]
     return not any(neg in prefix for neg in _NEGATIONS)
 
 
@@ -206,12 +228,14 @@ def _build_variants(case: Dict[str, Any]) -> List[Dict[str, Any]]:
     for index, alt in enumerate(case.get("alternatives") or [], 1):
         if not isinstance(alt, dict):
             continue
-        variants.append({
-            "name": str(alt.get("name") or f"备选答案{index}"),
-            "must_contain": alt.get("must_contain") or [],
-            "must_not_contain": alt.get("must_not_contain") or [],
-            "match_mode": str(alt.get("match_mode") or "all"),
-        })
+        variants.append(
+            {
+                "name": str(alt.get("name") or f"备选答案{index}"),
+                "must_contain": alt.get("must_contain") or [],
+                "must_not_contain": alt.get("must_not_contain") or [],
+                "match_mode": str(alt.get("match_mode") or "all"),
+            }
+        )
     return variants
 
 
@@ -230,13 +254,15 @@ def _evaluate_variants(
             hit_rate_threshold=hit_rate_threshold,
         )
         mnc = check_must_not_contain(answer, variant["must_not_contain"], question)
-        variant_results.append({
-            "name": variant["name"],
-            "match_mode": variant["match_mode"],
-            "passed": bool(mc.get("passed") and mnc.get("passed")),
-            "must_contain_result": mc,
-            "must_not_contain_result": mnc,
-        })
+        variant_results.append(
+            {
+                "name": variant["name"],
+                "match_mode": variant["match_mode"],
+                "passed": bool(mc.get("passed") and mnc.get("passed")),
+                "must_contain_result": mc,
+                "must_not_contain_result": mnc,
+            }
+        )
     return variant_results
 
 

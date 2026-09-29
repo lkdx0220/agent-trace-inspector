@@ -11,6 +11,7 @@
 
 证据只能由 doctor_tools 工具写入，LLM 无法伪造。
 """
+
 from __future__ import annotations
 
 import json
@@ -63,6 +64,7 @@ def _trace_summary(trace: Optional[Dict[str, Any]]) -> str:
     if not trace:
         return "（无 Trace）"
     lines = []
+
     def walk(span, depth=0):
         name = span.get("name") or span.get("span_type")
         stype = span.get("span_type")
@@ -75,6 +77,7 @@ def _trace_summary(trace: Optional[Dict[str, Any]]) -> str:
         lines.append(("  " * depth) + f"{name}{extra}")
         for c in span.get("children", []) or []:
             walk(c, depth + 1)
+
     walk(trace.get("root_span") or {})
     return "\n".join(lines[:40])
 
@@ -96,7 +99,7 @@ def _extract_json(content: str) -> Optional[Dict[str, Any]]:
     end = text.rfind("}")
     if start >= 0 and end > start:
         try:
-            return json.loads(text[start:end + 1])
+            return json.loads(text[start : end + 1])
         except Exception:
             return None
     return None
@@ -147,7 +150,7 @@ def _build_system_prompt(ctx: Dict[str, Any]) -> str:
                     {
                         "fact_type": "tool_output_contains|final_answer_contains|kb_probe_contains|raw_data_contains|plan_text_mentions_tool|actual_tool_called|plan_tool_call_names_empty|answer_short_circuit|prompt_current_contains|prompt_trace_version_known|alias_map_contains|not_found_tool|zero_tool_no_skip|evaluator_error_detected|routing_missing_required_tools|contamination_source_found|trace_source_snapshot_known",
                         "params": {"keyword": "相关关键词（或 term/tool_name）"},
-                        "expected": True
+                        "expected": True,
                     }
                 ],
                 "evidence_ids": ["LO-STG-01", "LO-STG-05"],
@@ -163,20 +166,30 @@ def _build_system_prompt(ctx: Dict[str, Any]) -> str:
     try:
         version_status = trace_snapshot_status(trace, str(ctx.get("project_path") or DEFAULT_PROJECT_PATH))
     except Exception:
-        version_status = {"trace_snapshot_known": False, "prompt_clean": False, "code_clean": False, "all_clean": False, "changed_files": []}
+        version_status = {
+            "trace_snapshot_known": False,
+            "prompt_clean": False,
+            "code_clean": False,
+            "all_clean": False,
+            "changed_files": [],
+        }
     if version_status.get("trace_snapshot_known"):
-        version_text = "\n".join([
-            "- 该 Trace 带有源码/提示词版本快照：known=true",
-            f"- prompt_snapshot_clean={version_status.get('prompt_clean')}  code_snapshot_clean={version_status.get('code_clean')}  all_clean={version_status.get('all_clean')}",
-            f"- 当前与 Trace 时刻不一致的文件: {version_status.get('changed_files') or []}",
-            "- 判定 Agent 历史行为时，只允许在当前文件与 Trace 快照一致的范围内引用当前代码；不一致时只能描述当前版本，不得断言旧行为。",
-        ])
+        version_text = "\n".join(
+            [
+                "- 该 Trace 带有源码/提示词版本快照：known=true",
+                f"- prompt_snapshot_clean={version_status.get('prompt_clean')}  code_snapshot_clean={version_status.get('code_clean')}  all_clean={version_status.get('all_clean')}",
+                f"- 当前与 Trace 时刻不一致的文件: {version_status.get('changed_files') or []}",
+                "- 判定 Agent 历史行为时，只允许在当前文件与 Trace 快照一致的范围内引用当前代码；不一致时只能描述当前版本，不得断言旧行为。",
+            ]
+        )
     else:
-        version_text = "\n".join([
-            "- 该 Trace 没有源码/提示词版本快照：known=false",
-            "- 只能以“当前工作区视角”做分析，不能断言 Trace 运行时刻的提示词/代码/知识库状态。",
-            "- 涉及“违反当时提示词/当时代码”的结论应标记为 version_unknown，或只给出当前版本的改进建议。",
-        ])
+        version_text = "\n".join(
+            [
+                "- 该 Trace 没有源码/提示词版本快照：known=false",
+                "- 只能以“当前工作区视角”做分析，不能断言 Trace 运行时刻的提示词/代码/知识库状态。",
+                "- 涉及“违反当时提示词/当时代码”的结论应标记为 version_unknown，或只给出当前版本的改进建议。",
+            ]
+        )
 
     return f"""你是“项目医生”：一位了解原神剧情助手项目架构、系统提示词与知识库实现的 AI 诊断专家。
 你面对一份评测失败病例。确定性诊断流水线已经完成全部 8 阶段采证与 CausalResolver 归因，你的任务：
@@ -188,17 +201,17 @@ def _build_system_prompt(ctx: Dict[str, Any]) -> str:
 {project_map}
 
 【评测失败病例】
-- 题目: {result.get('question')}
-- 分类: {case.get('category')} / {case.get('difficulty')}
-- 最终答案: {result.get('answer')}
-- 失败原因: {json.dumps(result.get('reasons'), ensure_ascii=False)}
-- 实际工具: {json.dumps(result.get('actual_tools'), ensure_ascii=False)}
-- prompt_pass: {result.get('prompt_pass')}  违规: {json.dumps(result.get('prompt_violations'), ensure_ascii=False)}
-- 评测标准: must_contain={json.dumps(case.get('must_contain'), ensure_ascii=False)} must_not_contain={json.dumps(case.get('must_not_contain'), ensure_ascii=False)} match_mode={case.get('match_mode')} alternatives={json.dumps(case.get('alternatives'), ensure_ascii=False)}
+- 题目: {result.get("question")}
+- 分类: {case.get("category")} / {case.get("difficulty")}
+- 最终答案: {result.get("answer")}
+- 失败原因: {json.dumps(result.get("reasons"), ensure_ascii=False)}
+- 实际工具: {json.dumps(result.get("actual_tools"), ensure_ascii=False)}
+- prompt_pass: {result.get("prompt_pass")}  违规: {json.dumps(result.get("prompt_violations"), ensure_ascii=False)}
+- 评测标准: must_contain={json.dumps(case.get("must_contain"), ensure_ascii=False)} must_not_contain={json.dumps(case.get("must_not_contain"), ensure_ascii=False)} match_mode={case.get("match_mode")} alternatives={json.dumps(case.get("alternatives"), ensure_ascii=False)}
 
 【Trace 摘要】
-- trace_id: {trace.get('trace_id') if trace else '无'}
-- trace_created_at: {trace.get('created_at') if trace else '无'}
+- trace_id: {trace.get("trace_id") if trace else "无"}
+- trace_created_at: {trace.get("created_at") if trace else "无"}
 {_trace_summary(trace)}
 
 【版本快照状态】
@@ -224,6 +237,7 @@ def _build_system_prompt(ctx: Dict[str, Any]) -> str:
 
 {_format_memory_block(ctx)}"""
 
+
 def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpoints: Any) -> Dict[str, Any]:
     """调用千问兼容接口；支持单个 endpoint 或 endpoint 列表，自动按顺序重试。
 
@@ -247,7 +261,7 @@ def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpo
     for ep in eps:
         base_url = str(ep.get("base_url") or "").rstrip("/")
         if not is_allowed_llm_endpoint(base_url):
-            errors.append(f"[{ep.get('source','?')}] endpoint 不在白名单，已拒绝")
+            errors.append(f"[{ep.get('source', '?')}] endpoint 不在白名单，已拒绝")
             continue
         api_key = str(ep.get("api_key") or "")
         url = base_url + "/chat/completions"
@@ -263,9 +277,9 @@ def _call_llm(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], endpo
             )
             if resp.status_code == 200:
                 return resp.json()
-            errors.append(f"[{ep.get('source','?')}] HTTP {resp.status_code}")
+            errors.append(f"[{ep.get('source', '?')}] HTTP {resp.status_code}")
         except Exception:
-            errors.append(f"[{ep.get('source','?')}] 请求异常")
+            errors.append(f"[{ep.get('source', '?')}] 请求异常")
     raise RuntimeError(f"LLM 调用失败（尝试了 {len(eps)} 个接口）: {' | '.join(errors)}")
 
 
@@ -276,9 +290,25 @@ def _tool_content(result: Dict[str, Any], max_chars: int = MAX_TOOL_CONTENT_CHAR
         return text
 
     signal_markers = (
-        "summary", "path", "line", "keyword", "tool", "error", "status",
-        "hit", "probe", "root", "evidence", "truncat", "query", "file",
-        "reason", "violation", "not_found", "未收录", "未找到",
+        "summary",
+        "path",
+        "line",
+        "keyword",
+        "tool",
+        "error",
+        "status",
+        "hit",
+        "probe",
+        "root",
+        "evidence",
+        "truncat",
+        "query",
+        "file",
+        "reason",
+        "violation",
+        "not_found",
+        "未收录",
+        "未找到",
     )
     lines: List[str] = []
     for line in text.splitlines():
@@ -295,7 +325,7 @@ def _tool_content(result: Dict[str, Any], max_chars: int = MAX_TOOL_CONTENT_CHAR
         "完整 evidence 已保存，可用 evidence_view / evidence_search 查看。"
     )
     body = "\n".join(lines) if lines else ""
-    head_tail = text[:max_chars // 2].rstrip() + "\n...[中间省略]...\n" + text[-max_chars // 2:].lstrip()
+    head_tail = text[: max_chars // 2].rstrip() + "\n...[中间省略]...\n" + text[-max_chars // 2 :].lstrip()
     if body:
         return "\n".join([header, "", "[signal lines]", body, "", "[head/tail]", head_tail])
     return "\n".join([header, "", head_tail])
@@ -417,6 +447,7 @@ def _autofill_missing(
 ) -> List[Dict[str, Any]]:
     """编排器兜底：LLM 没做完的检查单，由确定性代码直接补齐。"""
     from app.services.coverage_gate import missing_orders
+
     filled = []
     for order in missing_orders(ctx["lab_orders"], evidence_by_order):
         result = run_lab_check(order["id"], ctx)
@@ -585,10 +616,7 @@ def _fallback_prescription(oid: str, ev: Dict[str, Any]) -> Optional[Dict[str, A
             "evidence_level": "L2",
         }
     if category in {"prompt_violation", "zero_tool"}:
-        root = (
-            "非豁免场景未调用工具，或存在系统提示词合规违规；"
-            f"确定性证据：{str(ev.get('summary') or '')}"
-        )
+        root = f"非豁免场景未调用工具，或存在系统提示词合规违规；确定性证据：{str(ev.get('summary') or '')}"
         return {
             "issue": "工具调用/系统提示词合规问题",
             "root_cause": root,
@@ -625,26 +653,30 @@ def _fallback_default_prescription(
         first_ev = next((e for e in evidence_by_order[first_oid] if e.get("ok")), None)
         if first_ev:
             root = f"医生 LLM 未产出有效 JSON，已执行检查单 {first_oid}；确定性证据：{str(first_ev.get('summary') or '待人工复核')}"
-            return [{
-                "issue": "医生 LLM 产出失败，需人工复核",
-                "root_cause": root,
-                "evidence_ids": [first_oid],
-                "suggestion": "基于检查单证据人工复核，或重跑医生诊断。",
-                "target_file": "",
-                "severity": "medium",
-                "expected_effect": "完成人工复核并形成处方",
-                "evidence_level": "L2",
-            }]
-    return [{
-        "issue": "医生 LLM 产出失败且无可执行检查单",
-        "root_cause": "医生 LLM 未在限定轮次内产出有效最终 JSON，且检查单证据为空，需人工重跑诊断。",
-        "evidence_ids": [],
-        "suggestion": "检查 API Key/模型调用或重跑医生。",
-        "target_file": "",
-        "severity": "medium",
-        "expected_effect": "恢复医生诊断",
-        "evidence_level": "L1",
-    }]
+            return [
+                {
+                    "issue": "医生 LLM 产出失败，需人工复核",
+                    "root_cause": root,
+                    "evidence_ids": [first_oid],
+                    "suggestion": "基于检查单证据人工复核，或重跑医生诊断。",
+                    "target_file": "",
+                    "severity": "medium",
+                    "expected_effect": "完成人工复核并形成处方",
+                    "evidence_level": "L2",
+                }
+            ]
+    return [
+        {
+            "issue": "医生 LLM 产出失败且无可执行检查单",
+            "root_cause": "医生 LLM 未在限定轮次内产出有效最终 JSON，且检查单证据为空，需人工重跑诊断。",
+            "evidence_ids": [],
+            "suggestion": "检查 API Key/模型调用或重跑医生。",
+            "target_file": "",
+            "severity": "medium",
+            "expected_effect": "恢复医生诊断",
+            "evidence_level": "L1",
+        }
+    ]
 
 
 def _fallback_report(
@@ -677,10 +709,7 @@ def _fallback_report(
         prescriptions = _fallback_default_prescription(evidence_by_order)
         evidence_ids_used = list(prescriptions[0].get("evidence_ids") or [])
 
-    ev_summary = {
-        oid: [e.get("summary") for e in evs]
-        for oid, evs in evidence_by_order.items()
-    }
+    ev_summary = {oid: [e.get("summary") for e in evs] for oid, evs in evidence_by_order.items()}
     return {
         "diagnosis": {
             "summary": "医生 LLM 未在限定轮次内产出有效最终 JSON，已自动补齐全部检查单，以下为确定性证据与候选处方。",
@@ -693,6 +722,7 @@ def _fallback_report(
         "_evidence_digest": ev_summary,
         "_note": "fallback",
     }
+
 
 def _evidence_corpus_for_ids(
     eids: List[str],
@@ -722,9 +752,8 @@ def _meaningful_terms(text: str) -> List[str]:
     bigrams: List[str] = []
     for run in cjk:
         if len(run) >= 2:
-            bigrams.extend(run[i:i + 2] for i in range(len(run) - 1))
+            bigrams.extend(run[i : i + 2] for i in range(len(run) - 1))
     return list(dict.fromkeys(cjk + bigrams + words))
-
 
 
 def _evidence_type_profile(
@@ -754,21 +783,38 @@ def _evidence_type_profile(
 
 def _has_trace_level_evidence(profile: Dict[str, Any]) -> bool:
     cats = profile["categories"]
-    return bool(cats & {
-        "trace_replay", "plan_intent", "prompt_violation", "zero_tool",
-        "stage_input", "stage_routing", "stage_planning", "stage_tool_execution",
-        "stage_answer", "stage_evaluator",
-    })
+    return bool(
+        cats
+        & {
+            "trace_replay",
+            "plan_intent",
+            "prompt_violation",
+            "zero_tool",
+            "stage_input",
+            "stage_routing",
+            "stage_planning",
+            "stage_tool_execution",
+            "stage_answer",
+            "stage_evaluator",
+        }
+    )
 
 
 def _has_prompt_rule_evidence(profile: Dict[str, Any]) -> bool:
     cats = profile["categories"]
-    return bool(cats & {"prompt_rule", "stage_planning", "stage_version", "stage_knowledge_truth"}) or "read_system_prompt" in profile["tools"]
+    return (
+        bool(cats & {"prompt_rule", "stage_planning", "stage_version", "stage_knowledge_truth"})
+        or "read_system_prompt" in profile["tools"]
+    )
 
 
 def _has_kb_probe_evidence(profile: Dict[str, Any]) -> bool:
     cats = profile["categories"]
-    return bool(cats & {"missing_keyword", "not_found_tool", "stage_knowledge_truth"}) or "search_knowledge_base" in profile["tools"] or "inspect_aliases" in profile["tools"]
+    return (
+        bool(cats & {"missing_keyword", "not_found_tool", "stage_knowledge_truth"})
+        or "search_knowledge_base" in profile["tools"]
+        or "inspect_aliases" in profile["tools"]
+    )
 
 
 def _has_file_evidence(profile: Dict[str, Any], target: str = "") -> bool:
@@ -805,10 +851,7 @@ def _grounding_literal(
     terms = _meaningful_terms(root)
     grounded = [t for t in terms if t.lower() in corpus.lower()]
     if not grounded:
-        issues.append(
-            f"prescriptions[{index}] root_cause 没有任何字面证据支撑"
-            f"（引用 {eids}，候选术语 {terms[:8]}）"
-        )
+        issues.append(f"prescriptions[{index}] root_cause 没有任何字面证据支撑（引用 {eids}，候选术语 {terms[:8]}）")
         return None
     return root, eids
 
@@ -895,16 +938,25 @@ def _final_grounding_check(
 
 
 NEGATIVE_MARKERS = (
-    "题目设置", "评测标准", "知识库真缺", "知识库缺失", "数据缺失",
-    "数据不存在", "知识库中没有", "知识库未收录", "无需修改",
-    "无修改建议", "无法归因",
+    "题目设置",
+    "评测标准",
+    "知识库真缺",
+    "知识库缺失",
+    "数据缺失",
+    "数据不存在",
+    "知识库中没有",
+    "知识库未收录",
+    "无需修改",
+    "无修改建议",
+    "无法归因",
 )
 
 
 def _has_negative_conclusion(report: Dict[str, Any]) -> bool:
     diag = report.get("diagnosis") or {}
     texts = [
-        diag.get("summary", ""), diag.get("primary_root_cause", ""),
+        diag.get("summary", ""),
+        diag.get("primary_root_cause", ""),
         diag.get("issue_classification", ""),
     ]
     texts.extend(str(p.get("root_cause") or "") for p in (report.get("prescriptions") or []))
@@ -926,8 +978,11 @@ def _has_search_probe(
         if ev.get("ok") is False:
             continue
         if ev.get("tool") in {
-            "search_knowledge_base", "inspect_aliases", "read_project_file",
-            "grep_project", "read_system_prompt",
+            "search_knowledge_base",
+            "inspect_aliases",
+            "read_project_file",
+            "grep_project",
+            "read_system_prompt",
         }:
             return True
     return False
@@ -998,11 +1053,14 @@ def _near_miss_gate(
         return {"valid": True, "issues": []}
     if not _has_negative_conclusion(report):
         return {"valid": True, "issues": []}
-    blob = "\n".join([
-        str((report.get("diagnosis") or {}).get("summary", "")),
-        str((report.get("diagnosis") or {}).get("primary_root_cause", "")),
-        str((report.get("diagnosis") or {}).get("issue_classification", "")),
-    ] + [str(p.get("root_cause") or "") for p in (report.get("prescriptions") or [])])
+    blob = "\n".join(
+        [
+            str((report.get("diagnosis") or {}).get("summary", "")),
+            str((report.get("diagnosis") or {}).get("primary_root_cause", "")),
+            str((report.get("diagnosis") or {}).get("issue_classification", "")),
+        ]
+        + [str(p.get("root_cause") or "") for p in (report.get("prescriptions") or [])]
+    )
     kb_gap_markers = ("知识库真缺", "知识库缺失", "数据缺失", "数据不存在", "知识库中没有", "知识库未收录", "不存在")
     if any(m in blob for m in kb_gap_markers) and not _has_kb_gap_probe(evidence_by_order, extra_evidence):
         issues.append(
@@ -1010,8 +1068,7 @@ def _near_miss_gate(
         )
     if not _has_search_probe(evidence_by_order, extra_evidence):
         issues.append(
-            "结论包含“题目/数据/知识库不存在/无需修改”类判断，"
-            "但没有执行知识库检索、工具复检或代码/提示词读取证据"
+            "结论包含“题目/数据/知识库不存在/无需修改”类判断，但没有执行知识库检索、工具复检或代码/提示词读取证据"
         )
     if _evidence_says_keyword_exists(evidence_by_order):
         issues.append(
@@ -1021,14 +1078,17 @@ def _near_miss_gate(
     return {"valid": not issues, "issues": issues}
 
 
-
 # ============================================================
 # 结论一致性闸门（FactSheet + fact_assertions）
 # ============================================================
 
 CONSISTENCY_KINDS = set(PIPELINE_CONSISTENCY_KINDS) | {
-    "knowledge_gap", "recall_failure", "answer_composition",
-    "plan_output_failure", "prompt_violation", "alias_mapping",
+    "knowledge_gap",
+    "recall_failure",
+    "answer_composition",
+    "plan_output_failure",
+    "prompt_violation",
+    "alias_mapping",
     "evaluator_error",
 }
 
@@ -1040,7 +1100,6 @@ def _build_fact_sheet(
 ) -> Dict[str, Any]:
     """结论一致性闸门使用的 FactSheet（由确定性诊断流水线构建）。"""
     return build_fact_sheet_pipeline(ctx, evidence_by_order, extra_evidence)
-
 
 
 def _assertion_actual(sheet: Dict[str, Any], assertion: Dict[str, Any]) -> Optional[bool]:
@@ -1078,7 +1137,14 @@ def _assertion_actual(sheet: Dict[str, Any], assertion: Dict[str, Any]) -> Optio
         if tool:
             return any(str(x.get("name")) == tool for x in nf)
         return bool(nf)
-    if fact_type in {"tool_output_contains", "final_answer_contains", "kb_probe_contains", "raw_data_contains", "alias_map_contains", "prompt_current_contains"}:
+    if fact_type in {
+        "tool_output_contains",
+        "final_answer_contains",
+        "kb_probe_contains",
+        "raw_data_contains",
+        "alias_map_contains",
+        "prompt_current_contains",
+    }:
         key = ""
         if fact_type == "alias_map_contains":
             key = str(params.get("term") or "")
@@ -1158,7 +1224,6 @@ def _required_fact_patterns(kind: str) -> List[Tuple[str, bool, str]]:
     return []
 
 
-
 def _sheet_satisfies_required(
     sheet: Dict[str, Any],
     fact_type: str,
@@ -1174,12 +1239,19 @@ def _sheet_satisfies_required(
     if fact_type == "actual_tool_called":
         return bool(sheet.get("actual_tools")) == expected
     if fact_type in {
-        "plan_tool_call_names_empty", "answer_short_circuit",
-        "prompt_trace_version_known", "zero_tool_no_skip",
-        "evaluator_error_detected", "trace_source_snapshot_known",
-        "prompt_snapshot_clean", "code_snapshot_clean", "trace_version_clean",
-        "routing_event_seen", "routing_hard_rule_hit",
-        "routing_missing_required_tools", "contamination_source_found",
+        "plan_tool_call_names_empty",
+        "answer_short_circuit",
+        "prompt_trace_version_known",
+        "zero_tool_no_skip",
+        "evaluator_error_detected",
+        "trace_source_snapshot_known",
+        "prompt_snapshot_clean",
+        "code_snapshot_clean",
+        "trace_version_clean",
+        "routing_event_seen",
+        "routing_hard_rule_hit",
+        "routing_missing_required_tools",
+        "contamination_source_found",
         "version_unknown",
     }:
         return bool(sheet.get(fact_type)) == expected
@@ -1220,9 +1292,7 @@ def _gate_validate_assertions(
         actual = _assertion_actual(sheet, a)
         if actual is None:
             if fact_type in required_types:
-                issues.append(
-                    f"prescriptions[{index}].fact_assertions[{j}] 无法从确定证据中判定: {a}"
-                )
+                issues.append(f"prescriptions[{index}].fact_assertions[{j}] 无法从确定证据中判定: {a}")
             # 非必要断言无法判定时不拒绝，留下但不作为硬证据。
         elif bool(actual) != bool(expected):
             issues.append(
@@ -1258,8 +1328,7 @@ def _gate_required_assertions(
             matched = True
         if not matched:
             issues.append(
-                f"prescriptions[{index}] 结论类型 {kind} 缺少必要断言: "
-                f"fact_type={fact_type}, expected={expected}"
+                f"prescriptions[{index}] 结论类型 {kind} 缺少必要断言: fact_type={fact_type}, expected={expected}"
             )
 
 
@@ -1301,16 +1370,28 @@ def _conclusion_consistency_gate(
     _gate_resolver_alignment(ctx, prescriptions, issues)
     return {"valid": not issues, "issues": issues, "fact_sheet": sheet}
 
+
 def _assign_evidence_levels(
     report: Dict[str, Any],
     evidence_by_order: Dict[str, List[Dict[str, Any]]],
     extra_evidence: List[Dict[str, Any]],
 ) -> None:
     """三层证据等级：L1=纯推断，L2=结构化重放/间接证据，L4=直接源码/KB/工具验证。"""
-    direct_categories = {"missing_keyword", "forbidden_keyword", "not_found_tool", "stage_knowledge_truth", "stage_routing", "stage_tool_execution", "stage_version"}
+    direct_categories = {
+        "missing_keyword",
+        "forbidden_keyword",
+        "not_found_tool",
+        "stage_knowledge_truth",
+        "stage_routing",
+        "stage_tool_execution",
+        "stage_version",
+    }
     direct_tools = {
-        "search_knowledge_base", "inspect_aliases", "read_project_file",
-        "grep_project", "read_system_prompt",
+        "search_knowledge_base",
+        "inspect_aliases",
+        "read_project_file",
+        "grep_project",
+        "read_system_prompt",
     }
     levels: List[str] = []
     for p in report.get("prescriptions") or []:
@@ -1361,7 +1442,11 @@ def _doctor_case_context(
         raise ValueError(f"测试用例不存在: {case_id}")
 
     trace = get_trace(result.get("trace_id") or "") if result.get("trace_id") else None
-    prompt_compliance = check_prompt_compliance(trace, project_path) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"}
+    prompt_compliance = (
+        check_prompt_compliance(trace, project_path)
+        if trace
+        else {"passed": None, "violations": [], "evidence": "无 Trace"}
+    )
     orders = generate_pipeline_orders(result, case, trace, prompt_compliance)
     ctx: Dict[str, Any] = {
         "run_id": run_id,
@@ -1381,40 +1466,44 @@ def _doctor_case_context(
 
 def _doctor_tools() -> List[Dict[str, Any]]:
     tools = [t for t in llm_tool_definitions() if (t.get("function") or {}).get("name") != "run_lab_check"]
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "record_verified_claim",
-            "description": "记录一条已通过证据验证的事实。claim 必须能在 evidence_ids 对应证据原文中找到字面术语，否则会被拒绝。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "claim": {"type": "string", "description": "已验证事实的一句话描述"},
-                    "evidence_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "支撑该事实的证据 ID，如 LO-001、EXT-001",
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "record_verified_claim",
+                "description": "记录一条已通过证据验证的事实。claim 必须能在 evidence_ids 对应证据原文中找到字面术语，否则会被拒绝。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "claim": {"type": "string", "description": "已验证事实的一句话描述"},
+                        "evidence_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "支撑该事实的证据 ID，如 LO-001、EXT-001",
+                        },
                     },
+                    "required": ["claim", "evidence_ids"],
                 },
-                "required": ["claim", "evidence_ids"],
             },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "pin_fact",
-            "description": "固定一条高信号事实到医生长期记忆；必须绑定一个真实证据 ID，且文本需在该证据原文中有字面支撑。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "要固定的事实"},
-                    "evidence_id": {"type": "string", "description": "支撑证据 ID"},
+        }
+    )
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "pin_fact",
+                "description": "固定一条高信号事实到医生长期记忆；必须绑定一个真实证据 ID，且文本需在该证据原文中有字面支撑。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "要固定的事实"},
+                        "evidence_id": {"type": "string", "description": "支撑证据 ID"},
+                    },
+                    "required": ["text", "evidence_id"],
                 },
-                "required": ["text", "evidence_id"],
             },
-        },
-    })
+        }
+    )
     return tools
 
 
@@ -1437,11 +1526,13 @@ def _doctor_execute_tool_calls(
         except Exception:
             args = {}
         result = _execute_tool(name, args, ctx, evidence_by_order, extra_evidence)
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tc.get("id") or f"tc-{turn}",
-            "content": _tool_content(result),
-        })
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc.get("id") or f"tc-{turn}",
+                "content": _tool_content(result),
+            }
+        )
 
 
 def _doctor_autofill_feedback(
@@ -1453,10 +1544,7 @@ def _doctor_autofill_feedback(
     if not missing:
         return None
     filled = _autofill_missing(ctx, evidence_by_order)
-    digest = "\n".join(
-        f"{f['order_id']}: {'OK' if f['ok'] else 'ERROR'} {f.get('summary') or ''}"
-        for f in filled
-    )
+    digest = "\n".join(f"{f['order_id']}: {'OK' if f['ok'] else 'ERROR'} {f.get('summary') or ''}" for f in filled)
     return (
         f"你试图在检查单未完成时结束，编排器已自动补齐以下检查：\n{digest}\n"
         "现在证据库已完整。请基于全部证据重新输出最终医嘱 JSON，不要再提前结束。"
@@ -1477,13 +1565,7 @@ def _doctor_validate_final(
     if report:
         _assign_evidence_levels(report, evidence_by_order, extra_evidence)
     combined_issues = validation["issues"] + grounding["issues"] + near_miss["issues"] + consistency["issues"]
-    ok = bool(
-        report
-        and validation["valid"]
-        and grounding["valid"]
-        and near_miss["valid"]
-        and consistency["valid"]
-    )
+    ok = bool(report and validation["valid"] and grounding["valid"] and near_miss["valid"] and consistency["valid"])
     payload = {
         "validation": validation,
         "grounding": grounding,
@@ -1527,7 +1609,10 @@ def prescribe_run_case(
     tools = _doctor_tools()
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": _build_system_prompt(ctx)},
-        {"role": "user", "content": f"诊断对象 run={run_id} case={case_id}。8 阶段证据与 CausalResolver 归因已就绪，请输出最终医嘱 JSON。"},
+        {
+            "role": "user",
+            "content": f"诊断对象 run={run_id} case={case_id}。8 阶段证据与 CausalResolver 归因已就绪，请输出最终医嘱 JSON。",
+        },
     ]
     final_report: Optional[Dict[str, Any]] = None
 
@@ -1580,7 +1665,13 @@ def prescribe_run_case(
         messages.append({"role": "user", "content": feedback})
 
     if final_report is None:
-        final_report = _fallback_report(result, evidence_by_order, extra_evidence=extra_evidence, resolution=ctx.get("resolution"), fact_sheet=ctx.get("fact_sheet"))
+        final_report = _fallback_report(
+            result,
+            evidence_by_order,
+            extra_evidence=extra_evidence,
+            resolution=ctx.get("resolution"),
+            fact_sheet=ctx.get("fact_sheet"),
+        )
 
     return {
         "ok": True,

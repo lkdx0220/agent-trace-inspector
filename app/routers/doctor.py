@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """项目医生 API。"""
+
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,7 +16,9 @@ router = APIRouter(prefix="/api", tags=["doctor"], dependencies=[Depends(require
 
 
 @router.post("/runs/{run_id}/doctor/{case_id}")
-def run_doctor(run_id: str, case_id: str, payload: Optional[Dict[str, Any]] = None, _rate: None = Depends(doctor_rate_limit)) -> Dict[str, Any]:
+def run_doctor(
+    run_id: str, case_id: str, payload: Optional[Dict[str, Any]] = None, _rate: None = Depends(doctor_rate_limit)
+) -> Dict[str, Any]:
     payload = payload or {}
     project_path = payload.get("project_path") or DEFAULT_PROJECT_PATH
     try:

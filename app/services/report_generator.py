@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """运行分析报告生成器：基于题目语义元数据 + Trace 工具证据，输出自然语言分析报告。"""
+
 from __future__ import annotations
 
 import json
@@ -28,6 +29,7 @@ def _load_metadata() -> Dict[str, Any]:
 
 def _all_tool_texts(trace: Dict[str, Any]) -> str:
     parts = []
+
     def walk(span):
         if span.get("span_type") == "tool":
             preview = span.get("result_preview") or ""
@@ -35,6 +37,7 @@ def _all_tool_texts(trace: Dict[str, Any]) -> str:
                 parts.append(preview)
         for c in span.get("children", []):
             walk(c)
+
     walk(trace.get("root_span") or {})
     return "\n".join(parts)
 
@@ -63,6 +66,7 @@ def _load_report_context(
 
     answer = result.get("answer") or ""
     from app.services.eval_store import list_test_cases
+
     cases = list_test_cases()
     case = next((c for c in cases if c["case_id"] == case_id), None)
     ref_answer = (case or {}).get("expected_answer") or ""
@@ -120,21 +124,25 @@ def _build_report_rows(
     missing_rows = []
     for kw in missing:
         in_tools = kw in tool_text
-        missing_rows.append({
-            "keyword": kw,
-            "in_tool_output": "是" if in_tools else "否",
-            "reference_context": rationale.get("must_contain", {}).get(kw, ""),
-            "why_required": rationale.get("must_contain", {}).get(kw, ""),
-        })
+        missing_rows.append(
+            {
+                "keyword": kw,
+                "in_tool_output": "是" if in_tools else "否",
+                "reference_context": rationale.get("must_contain", {}).get(kw, ""),
+                "why_required": rationale.get("must_contain", {}).get(kw, ""),
+            }
+        )
     bad_rows = []
     for kw in forbidden_in_answer:
         in_tools = kw in tool_text
-        bad_rows.append({
-            "keyword": kw,
-            "in_tool_output": "是" if in_tools else "否",
-            "reference_note": rationale.get("must_not_contain", {}).get(kw, ""),
-            "why_forbidden": rationale.get("must_not_contain", {}).get(kw, ""),
-        })
+        bad_rows.append(
+            {
+                "keyword": kw,
+                "in_tool_output": "是" if in_tools else "否",
+                "reference_note": rationale.get("must_not_contain", {}).get(kw, ""),
+                "why_forbidden": rationale.get("must_not_contain", {}).get(kw, ""),
+            }
+        )
     return missing_rows, bad_rows
 
 
@@ -167,8 +175,8 @@ def _build_analysis_prompt(
 {json.dumps(variant_summary, ensure_ascii=False, indent=2)}
 
 【确定性失败信息】
-缺失必须包含词：{json.dumps([r['keyword'] for r in missing_rows], ensure_ascii=False)}
-违规出现禁止词：{json.dumps([r['keyword'] for r in bad_rows], ensure_ascii=False)}
+缺失必须包含词：{json.dumps([r["keyword"] for r in missing_rows], ensure_ascii=False)}
+违规出现禁止词：{json.dumps([r["keyword"] for r in bad_rows], ensure_ascii=False)}
 
 【逐关键词证据】
 缺失关键词证据：
@@ -218,7 +226,7 @@ def _call_report_llm(prompt: str, project_path: str, run_id: str, case_id: str) 
     for ep in api_keys:
         base_url = str(ep.get("base_url") or "").rstrip("/")
         if not is_allowed_llm_endpoint(base_url):
-            errors.append(f"[{ep.get('source','?')}] endpoint 不在白名单，已拒绝")
+            errors.append(f"[{ep.get('source', '?')}] endpoint 不在白名单，已拒绝")
             continue
         url = base_url + "/chat/completions"
         try:
@@ -231,7 +239,10 @@ def _call_report_llm(prompt: str, project_path: str, run_id: str, case_id: str) 
                 json={
                     "model": "qwen3.7-max",
                     "messages": [
-                        {"role": "system", "content": "你是严格的 Agent 运行分析报告撰写者，只输出报告正文，不输出 JSON。"},
+                        {
+                            "role": "system",
+                            "content": "你是严格的 Agent 运行分析报告撰写者，只输出报告正文，不输出 JSON。",
+                        },
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.1,
@@ -242,9 +253,9 @@ def _call_report_llm(prompt: str, project_path: str, run_id: str, case_id: str) 
                 report_text = resp.json()["choices"][0]["message"]["content"].strip()
                 save_report(run_id, case_id, report_text)
                 return report_text
-            errors.append(f"[{ep.get('source','?')}] HTTP {resp.status_code}")
+            errors.append(f"[{ep.get('source', '?')}] HTTP {resp.status_code}")
         except Exception:
-            errors.append(f"[{ep.get('source','?')}] 请求异常")
+            errors.append(f"[{ep.get('source', '?')}] 请求异常")
     return "LLM 调用失败: " + " | ".join(errors)
 
 
@@ -258,11 +269,21 @@ def generate_analysis_report(
     trace = ctx["trace"]
     tool_text = _all_tool_texts(trace) if trace else ""
     tool_summary = _trace_summary(trace) if trace else "（无 Trace）"
-    prompt_compliance = check_prompt_compliance(trace, ctx["project_path"]) if trace else {"passed": None, "violations": [], "evidence": "无 Trace"}
+    prompt_compliance = (
+        check_prompt_compliance(trace, ctx["project_path"])
+        if trace
+        else {"passed": None, "violations": [], "evidence": "无 Trace"}
+    )
     prompt_rule_excerpt = get_tool_requirement_excerpt(ctx["project_path"])
     missing_rows, bad_rows = _build_report_rows(missing, forbidden_in_answer, tool_text, ctx["rationale"])
     prompt = _build_analysis_prompt(
-        ctx, variant_summary, missing_rows, bad_rows, tool_summary, tool_text,
-        prompt_compliance, prompt_rule_excerpt,
+        ctx,
+        variant_summary,
+        missing_rows,
+        bad_rows,
+        tool_summary,
+        tool_text,
+        prompt_compliance,
+        prompt_rule_excerpt,
     )
     return _call_report_llm(prompt, ctx["project_path"], run_id, case_id)

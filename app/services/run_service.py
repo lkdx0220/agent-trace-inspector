@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """运行与回归服务：基于已存储 Trace 做离线评测。"""
+
 from __future__ import annotations
 
 import uuid
@@ -26,6 +27,7 @@ def create_offline_run(name: str = "离线评测") -> RunRecord:
         trace_id = trace_by_question.get(case["question"])
         trace = get_trace(trace_id) if trace_id else None
         from schemas.eval import TestCase
+
         case_obj = TestCase(**case)
         results.append(evaluate_trace_for_case(case_obj, trace))
 
@@ -61,12 +63,14 @@ def compare_runs(run_a_id: str, run_b_id: str) -> Dict[str, Any]:
         if not ra or not rb:
             continue
         if ra.get("passed") != rb.get("passed"):
-            changed.append({
-                "case_id": case_id,
-                "question": ra.get("question") or rb.get("question"),
-                "run_a_passed": ra.get("passed"),
-                "run_b_passed": rb.get("passed"),
-            })
+            changed.append(
+                {
+                    "case_id": case_id,
+                    "question": ra.get("question") or rb.get("question"),
+                    "run_a_passed": ra.get("passed"),
+                    "run_b_passed": rb.get("passed"),
+                }
+            )
 
     return {
         "run_a": {"run_id": run_a["run_id"], "name": run_a["name"], "summary": run_a["summary"]},

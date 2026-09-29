@@ -6,6 +6,7 @@
 2. 对原项目的一切探查都是只读（read_text / grep / 子进程导入原项目查询函数）；
 3. 知识库检索通过子进程跑原项目代码，不把原项目 import 进 inspector 进程。
 """
+
 from __future__ import annotations
 
 import json
@@ -87,7 +88,11 @@ def _find_where(keyword: str, trace: Optional[Dict[str, Any]], answer: str) -> D
 def _short_circuit_answer(answer: str) -> Optional[str]:
     """识别常见的回答阶段短路串。"""
     patterns = [
-        "当前知识库未收录", "未找到「", "未找到\"", "知识库未收录", "无法回答",
+        "当前知识库未收录",
+        "未找到「",
+        '未找到"',
+        "知识库未收录",
+        "无法回答",
     ]
     for p in patterns:
         if p in answer:
@@ -98,6 +103,7 @@ def _short_circuit_answer(answer: str) -> Optional[str]:
 # ============================================================
 # 原项目只读探查（子进程）
 # ============================================================
+
 
 def _load_env(project_path: Path, include_project_keys: bool = False) -> Dict[str, str]:
     """最小子进程环境；只有需要联网的探针才注入原项目 .env 中的 Key。"""
@@ -122,22 +128,13 @@ def _run_probe(
     probe_file = tmp_dir / f"doctor_probe_{uuid.uuid4().hex}.py"
     payload_file = None
     marker = f"@@DOCTOR_PROBE_{uuid.uuid4().hex}@@"
-    print_line = (
-        "print("
-        + json.dumps(marker)
-        + " + json.dumps(out, ensure_ascii=False) + "
-        + json.dumps(marker)
-        + ")"
-    )
+    print_line = "print(" + json.dumps(marker) + " + json.dumps(out, ensure_ascii=False) + " + json.dumps(marker) + ")"
     # 子进程 stdout 在 Windows 默认用 GBK 编码，强制 UTF-8，避免中文探针结果乱码。
     probe_code = ["import sys\n", "sys.stdout.reconfigure(encoding='utf-8')\n"]
     if payload is not None:
         payload_file = tmp_dir / f"doctor_probe_{uuid.uuid4().hex}.json"
         payload_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        probe_code.append(
-            "import json\n"
-            "PAYLOAD = json.load(open(sys.argv[1], encoding='utf-8'))\n"
-        )
+        probe_code.append("import json\nPAYLOAD = json.load(open(sys.argv[1], encoding='utf-8'))\n")
     probe_code.append(code)
     probe_code.append("\n" + print_line + "\n")
     probe_file.write_text("".join(probe_code), encoding="utf-8")
@@ -456,10 +453,10 @@ def routing_probe(project_path: str, question: str, timeout: int = 180) -> Dict[
     return _run_probe(Path(project_path), code, timeout=timeout, payload=payload)
 
 
-
 # ============================================================
 # LLM 可直接调用的只读工具
 # ============================================================
+
 
 def _safe_relative(project_root: Path, rel: str) -> Optional[Path]:
     """严格限制相对路径必须位于 project_root 内。
@@ -490,8 +487,18 @@ def _safe_relative(project_root: Path, rel: str) -> Optional[Path]:
 
 
 UNSAFE_FILE_PARTS = (
-    ".git", ".env", ".pem", ".key", "secret", "credential",
-    "token", "auth", "node_modules", "__pycache__", ".venv", "venv",
+    ".git",
+    ".env",
+    ".pem",
+    ".key",
+    "secret",
+    "credential",
+    "token",
+    "auth",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
 )
 
 
@@ -577,7 +584,6 @@ def grep_project(project_path: str, pattern: str, rel_path: str = "") -> Dict[st
     return {"ok": True, "pattern": pattern, "hits": hits, "truncated": False}
 
 
-
 def _project_vcs_info(project_path: str) -> Dict[str, Any]:
     """只读获取原项目当前 git 版本与工作区状态，供提示词证据标注“当前版本”。"""
     root = Path(project_path)
@@ -586,7 +592,10 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
     try:
         r = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5, env=build_child_env(),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=build_child_env(),
         )
         if r.returncode == 0:
             head = r.stdout.strip()
@@ -595,7 +604,10 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
     try:
         r = subprocess.run(
             ["git", "-C", str(root), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=5, env=build_child_env(),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=build_child_env(),
         )
         if r.returncode == 0:
             dirty = bool(r.stdout.strip())
@@ -644,23 +656,29 @@ def read_system_prompt(project_path: str, name: str) -> Dict[str, Any]:
             }
     if name in {"plan", "agent_system_v4_plan", "规划"}:
         return {
-            "ok": True, "name": "agent_system_v4_plan",
+            "ok": True,
+            "name": "agent_system_v4_plan",
             "content": get_plan_system_prompt(project_path),
-            "source_snapshot": vcs, "file_meta": file_meta,
+            "source_snapshot": vcs,
+            "file_meta": file_meta,
             "version_notice": "此文件为当前工作区版本，不一定等于 Trace 运行时的版本；判定违规前必须确认版本一致。",
         }
     if name in {"answer", "agent_system_v4_answer", "回答"}:
         return {
-            "ok": True, "name": "agent_system_v4_answer",
+            "ok": True,
+            "name": "agent_system_v4_answer",
             "content": get_answer_system_prompt(project_path),
-            "source_snapshot": vcs, "file_meta": file_meta,
+            "source_snapshot": vcs,
+            "file_meta": file_meta,
             "version_notice": "此文件为当前工作区版本，不一定等于 Trace 运行时的版本；判定违规前必须确认版本一致。",
         }
     if name in {"tool_rule", "tool_requirement", "工具规则"}:
         return {
-            "ok": True, "name": "tool_requirement_excerpt",
+            "ok": True,
+            "name": "tool_requirement_excerpt",
             "content": get_tool_requirement_excerpt(project_path),
-            "source_snapshot": vcs, "file_meta": file_meta,
+            "source_snapshot": vcs,
+            "file_meta": file_meta,
             "version_notice": "此文件为当前工作区版本，不一定等于 Trace 运行时的版本；判定违规前必须确认版本一致。",
         }
     return {"ok": False, "error": f"未知系统提示词: {name}（可选 plan/answer/tool_rule）"}
@@ -669,6 +687,7 @@ def read_system_prompt(project_path: str, name: str) -> Dict[str, Any]:
 # ============================================================
 # 证据回看工具（只读，不产生新证据）
 # ============================================================
+
 
 def _evidence_items(
     evidence_by_order: Optional[Dict[str, List[Dict[str, Any]]]],
@@ -680,25 +699,29 @@ def _evidence_items(
         for ev in evs:
             if not ev.get("ok"):
                 continue
-            items.append({
-                "id": oid,
-                "tool": "run_lab_check",
-                "args": {"lab_order_id": oid},
-                "status": 0,
-                "summary": str(ev.get("summary") or ""),
-                "content": json.dumps(ev, ensure_ascii=False),
-            })
+            items.append(
+                {
+                    "id": oid,
+                    "tool": "run_lab_check",
+                    "args": {"lab_order_id": oid},
+                    "status": 0,
+                    "summary": str(ev.get("summary") or ""),
+                    "content": json.dumps(ev, ensure_ascii=False),
+                }
+            )
     for ev in extra_evidence or []:
         if ev.get("ok") is False:
             continue
-        items.append({
-            "id": str(ev.get("id") or ""),
-            "tool": str(ev.get("tool") or ""),
-            "args": ev.get("args") or {},
-            "status": 0,
-            "summary": (ev.get("result") or {}).get("summary", "") if isinstance(ev.get("result"), dict) else "",
-            "content": json.dumps(ev.get("result") or ev, ensure_ascii=False),
-        })
+        items.append(
+            {
+                "id": str(ev.get("id") or ""),
+                "tool": str(ev.get("tool") or ""),
+                "args": ev.get("args") or {},
+                "status": 0,
+                "summary": (ev.get("result") or {}).get("summary", "") if isinstance(ev.get("result"), dict) else "",
+                "content": json.dumps(ev.get("result") or ev, ensure_ascii=False),
+            }
+        )
     return items
 
 
@@ -735,12 +758,14 @@ def evidence_search(
                 break
             s = max(0, idx - ctx)
             e = min(len(raw), idx + len(pattern) + ctx)
-            hits.append({
-                "evidence_id": item["id"],
-                "tool": item["tool"],
-                "offset": idx,
-                "snippet": raw[s:e],
-            })
+            hits.append(
+                {
+                    "evidence_id": item["id"],
+                    "tool": item["tool"],
+                    "offset": idx,
+                    "snippet": raw[s:e],
+                }
+            )
             start = idx + max(1, len(needle))
             if len(hits) >= max_hits:
                 break
@@ -779,7 +804,7 @@ def evidence_view(
         max_chars = 6000
     if max_chars <= 0:
         max_chars = max(0, len(raw) - start)
-    chunk = raw[start:start + max_chars]
+    chunk = raw[start : start + max_chars]
     end = start + len(chunk)
     return {
         "ok": True,
@@ -796,6 +821,7 @@ def evidence_view(
 # ============================================================
 # 确定性 run_lab_check
 # ============================================================
+
 
 def _plan_signal(trace: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """从 trace_events 提取 plan 相关信号。"""
@@ -827,14 +853,22 @@ def _plan_signal(trace: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return signal
 
 
-
-
 # 常见工具名，用于从 plan 文本中识别“计划要调用但实际未调用”的工具意图。
 KNOWN_TOOL_NAMES = {
-    "hybrid_search", "query_character", "query_region", "query_story",
-    "query_weapon", "query_quest", "query_monster", "query_artifact",
-    "query_material", "query_food", "query_book", "query_npc",
-    "load_quest_content", "search_knowledge_base",
+    "hybrid_search",
+    "query_character",
+    "query_region",
+    "query_story",
+    "query_weapon",
+    "query_quest",
+    "query_monster",
+    "query_artifact",
+    "query_material",
+    "query_food",
+    "query_book",
+    "query_npc",
+    "load_quest_content",
+    "search_knowledge_base",
 }
 
 
@@ -858,7 +892,7 @@ def _audit_actual_tools(tool_spans: List[Dict[str, Any]], result: Dict[str, Any]
     for s in tool_spans:
         if s.get("name"):
             actual.append(str(s.get("name")))
-    for t in (result.get("actual_tools") or []):
+    for t in result.get("actual_tools") or []:
         if t not in actual:
             actual.append(str(t))
     return actual
@@ -917,20 +951,24 @@ def _audit_keyword_findings(
         if not kw:
             continue
         where = _find_where(kw, trace, answer)
-        must_contain_findings.append({
-            "keyword": kw,
-            "in_answer": where["final_answer"],
-            "in_tool_results": where["tool_results"],
-        })
+        must_contain_findings.append(
+            {
+                "keyword": kw,
+                "in_answer": where["final_answer"],
+                "in_tool_results": where["tool_results"],
+            }
+        )
     forbidden_findings: List[Dict[str, Any]] = []
     for kw in must_not:
         if not kw:
             continue
-        forbidden_findings.append({
-            "keyword": kw,
-            "in_answer": kw in answer,
-            "in_tool_results": _find_where(kw, trace, answer)["tool_results"],
-        })
+        forbidden_findings.append(
+            {
+                "keyword": kw,
+                "in_answer": kw in answer,
+                "in_tool_results": _find_where(kw, trace, answer)["tool_results"],
+            }
+        )
     return must_contain_findings, forbidden_findings
 
 
@@ -971,9 +1009,11 @@ def _audit_summary(
     summary_parts: List[str] = []
     if plan_intent_mismatch:
         summary_parts.append(
-            "plan 文本规划调用 " + "、".join(plan_intent_mismatch["plan_intents"]) +
-            "，实际工具调用=" + (str(actual) if actual else "无") +
-            "；plan 结构化输出缺失"
+            "plan 文本规划调用 "
+            + "、".join(plan_intent_mismatch["plan_intents"])
+            + "，实际工具调用="
+            + (str(actual) if actual else "无")
+            + "；plan 结构化输出缺失"
         )
     if discrepancies:
         summary_parts.append("评测器一致性差异：" + "；".join(discrepancies[:6]))
@@ -1014,8 +1054,14 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
     must_contain_findings, forbidden_findings = _audit_keyword_findings(must_contain, must_not, trace, answer)
 
     discrepancies = _audit_evaluator_discrepancies(
-        must_contain, must_not, answer, result,
-        plan_intent_mismatch, tool_spans, signal.get("tool_skip_reason"), not_found_tools,
+        must_contain,
+        must_not,
+        answer,
+        result,
+        plan_intent_mismatch,
+        tool_spans,
+        signal.get("tool_skip_reason"),
+        not_found_tools,
     )
     summary = _audit_summary(plan_intent_mismatch, discrepancies, not_found_tools, short, actual)
 
@@ -1034,6 +1080,7 @@ def _trace_truth_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
         "trace_metadata": (trace or {}).get("metadata") or {},
         "summary": summary,
     }
+
 
 def _lab_context(ctx: Dict[str, Any]) -> Dict[str, Any]:
     trace = ctx.get("trace")
@@ -1057,14 +1104,16 @@ def _lab_trace_replay(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Di
     calls = []
     for s in tool_spans:
         full = s.get("result_full") or s.get("result_preview") or ""
-        calls.append({
-            "span_id": s.get("span_id"),
-            "name": s.get("name"),
-            "status": s.get("status"),
-            "args": s.get("tool_args") or {},
-            "result_length": s.get("result_length"),
-            "preview": str(full)[:300],
-        })
+        calls.append(
+            {
+                "span_id": s.get("span_id"),
+                "name": s.get("name"),
+                "status": s.get("status"),
+                "args": s.get("tool_args") or {},
+                "result_length": s.get("result_length"),
+                "preview": str(full)[:300],
+            }
+        )
     answer_ev = next((e for e in _events(c["trace"]) if e.get("event") == "answer_end"), None)
     data = {
         "tool_count": len(calls),
@@ -1072,7 +1121,9 @@ def _lab_trace_replay(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Di
         "answer_end_event": {k: (str(v)[:200]) for k, v in ((answer_ev or {}).get("data") or {}).items()},
         "final_answer": c["answer"][:500],
     }
-    summary = f"共 {len(calls)} 个工具 span；" + ("；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用")
+    summary = f"共 {len(calls)} 个工具 span；" + (
+        "；".join(f"{c['name']}={c['status']}" for c in calls) or "无工具调用"
+    )
     return summary, data
 
 
@@ -1172,7 +1223,11 @@ def _lab_prompt_violation(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str
 
 def _lab_zero_tool(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     events = [{"event": e.get("event"), "data_keys": list((e.get("data") or {}).keys())} for e in _events(c["trace"])]
-    data = {"events": events, "span_types": [s.get("span_type") for s in c["spans"]], "metadata": (c["trace"] or {}).get("metadata") or {}}
+    data = {
+        "events": events,
+        "span_types": [s.get("span_type") for s in c["spans"]],
+        "metadata": (c["trace"] or {}).get("metadata") or {},
+    }
     return f"确认 0 个工具 span；事件序列={[e['event'] for e in events]}", data
 
 
@@ -1180,8 +1235,10 @@ def _lab_answer_integrity(c: Dict[str, Any], order: Dict[str, Any]) -> Tuple[str
     answer = c["answer"]
     corpus = _tool_text(c["tool_spans"])
     if corpus and answer:
+
         def grams(s: str) -> set:
-            return set(s[i:i + 4] for i in range(max(0, len(s) - 3)))
+            return set(s[i : i + 4] for i in range(max(0, len(s) - 3)))
+
         overlap = grams(answer) & grams(corpus)
         ratio = len(overlap) / max(1, len(grams(answer)))
     else:
@@ -1234,7 +1291,13 @@ def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     category = order.get("category")
     handler = _LAB_CHECK_HANDLERS.get(category)
     if handler is None:
-        return {"ok": False, "order_id": order_id, "status": "error", "summary": f"未支持的检查类别: {category}", "data": {}}
+        return {
+            "ok": False,
+            "order_id": order_id,
+            "status": "error",
+            "summary": f"未支持的检查类别: {category}",
+            "data": {},
+        }
 
     try:
         c = _lab_context(ctx)
@@ -1255,6 +1318,7 @@ def run_lab_check(order_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================
 # OpenAI function-calling 工具声明
 # ============================================================
+
 
 def llm_tool_definitions() -> List[Dict[str, Any]]:
     return [

@@ -54,12 +54,18 @@ def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
     cmd = [
         sys.executable,
         str(INSPECTOR_ROOT / "tools" / "run_evalset.py"),
-        "--adapter", "genshin",
-        "--workspace", str(Path(project_path).parent),
-        "--ids", ",".join(case_ids),
-        "--run-id", run_id,
-        "--name", name,
-        "--timeout", "600",
+        "--adapter",
+        "genshin",
+        "--workspace",
+        str(Path(project_path).parent),
+        "--ids",
+        ",".join(case_ids),
+        "--run-id",
+        run_id,
+        "--name",
+        name,
+        "--timeout",
+        "600",
         "--force",
         "--save-db",
     ]
@@ -98,6 +104,7 @@ def _md_to_html(text: str) -> str:
     import markdown
 
     from app.services.html_sanitizer import sanitize_html
+
     rendered = markdown.markdown(text or "", extensions=["tables", "fenced_code", "nl2br"])
     return sanitize_html(rendered)
 
@@ -105,6 +112,7 @@ def _md_to_html(text: str) -> str:
 @router.get("/runs/{run_id}/report/{case_id}")
 def get_report_result(run_id: str, case_id: str) -> Dict[str, Any]:
     from app.services.eval_store import get_report
+
     text = get_report(run_id, case_id)
     if not text:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -114,6 +122,7 @@ def get_report_result(run_id: str, case_id: str) -> Dict[str, Any]:
 @router.post("/runs/{run_id}/report/{case_id}")
 def generate_report(run_id: str, case_id: str) -> Dict[str, Any]:
     from app.services.report_generator import generate_analysis_report
+
     try:
         text = generate_analysis_report(run_id, case_id)
         return {"case_id": case_id, "report": text, "report_html": _md_to_html(text)}
@@ -124,6 +133,7 @@ def generate_report(run_id: str, case_id: str) -> Dict[str, Any]:
 @router.get("/runs/{run_id}/diagnose/{case_id}")
 def get_diagnosis_result(run_id: str, case_id: str) -> Dict[str, Any]:
     from app.services.eval_store import get_diagnosis
+
     d = get_diagnosis(run_id, case_id)
     if not d:
         raise HTTPException(status_code=404, detail="Diagnosis not found")
@@ -133,6 +143,7 @@ def get_diagnosis_result(run_id: str, case_id: str) -> Dict[str, Any]:
 @router.post("/runs/{run_id}/diagnose/{case_id}")
 def diagnose(run_id: str, case_id: str, _rate: None = Depends(diagnose_rate_limit)) -> Dict[str, Any]:
     from app.services.diagnoser import diagnose_run_case
+
     try:
         return diagnose_run_case(run_id, case_id)
     except ValueError as e:
@@ -153,9 +164,12 @@ def get_run_detail(run_id: str) -> Dict[str, Any]:
 
 
 @router.post("/runs/{run_id}/audit/{case_id}")
-def audit_case_endpoint(run_id: str, case_id: str, payload: Dict[str, Any] = None, _rate: None = Depends(audit_rate_limit)) -> Dict[str, Any]:
+def audit_case_endpoint(
+    run_id: str, case_id: str, payload: Dict[str, Any] = None, _rate: None = Depends(audit_rate_limit)
+) -> Dict[str, Any]:
     """对单个病例做轻量答案一致性审计（passed/failed 均可，通常跑 passed）。"""
     from app.services.case_audit import audit_case
+
     payload = payload or {}
     try:
         return audit_case(run_id, case_id, use_llm=bool(payload.get("use_llm", True)))
@@ -164,12 +178,17 @@ def audit_case_endpoint(run_id: str, case_id: str, payload: Dict[str, Any] = Non
 
 
 @router.post("/runs/{run_id}/audit")
-def audit_run_endpoint(run_id: str, payload: Dict[str, Any] = None, _rate: None = Depends(audit_rate_limit)) -> Dict[str, Any]:
+def audit_run_endpoint(
+    run_id: str, payload: Dict[str, Any] = None, _rate: None = Depends(audit_rate_limit)
+) -> Dict[str, Any]:
     """批量审计一个 Run 的所有 passed 病例。"""
     from app.services.case_audit import audit_run
+
     payload = payload or {}
     try:
-        return audit_run(run_id, use_llm=bool(payload.get("use_llm", True)), only_passed=bool(payload.get("only_passed", True)))
+        return audit_run(
+            run_id, use_llm=bool(payload.get("use_llm", True)), only_passed=bool(payload.get("only_passed", True))
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -177,6 +196,7 @@ def audit_run_endpoint(run_id: str, payload: Dict[str, Any] = None, _rate: None 
 @router.get("/runs/{run_id}/audit")
 def list_audits(run_id: str) -> Dict[str, Any]:
     from app.services.eval_store import list_case_audits
+
     items = list_case_audits(run_id)
     return {"run_id": run_id, "count": len(items), "items": items}
 

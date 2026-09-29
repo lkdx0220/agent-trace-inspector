@@ -7,6 +7,7 @@
 默认读取 evalset/genshin/cases.json 的全部题目，逐题起独立 adapter 子进程，
 跑完后由 evaluator/db_bridge.py 写回 inspector.db，供 Web UI 查看。
 """
+
 from __future__ import annotations
 
 import json
@@ -31,12 +32,16 @@ def main() -> int:
     cmd = [
         sys.executable,
         str(ROOT / "tools" / "run_evalset.py"),
-        "--adapter", "genshin",
-        "--ids", ",".join(ids),
+        "--adapter",
+        "genshin",
+        "--ids",
+        ",".join(ids),
         "--force",
         "--save-db",
-        "--name", "全量评测",
-        "--timeout", "600",
+        "--name",
+        "全量评测",
+        "--timeout",
+        "600",
     ]
     print(f"[入口] 全量评测 {len(ids)} 题 -> tools/run_evalset.py")
     return subprocess.call(cmd, cwd=str(ROOT))

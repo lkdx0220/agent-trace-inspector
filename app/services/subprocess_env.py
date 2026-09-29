@@ -10,6 +10,7 @@
   kb_vectors + text-embedding-v4；
   其他路径（尤其是重建前备份目录）一律丢弃，回落到原项目默认 kb_vectors_m3。
 """
+
 from __future__ import annotations
 
 import os
@@ -20,16 +21,41 @@ from app.services.path_guard import ensure_project_path
 
 # Python / 子进程运行必需的系统环境变量（大小写不敏感比较）。
 _ENV_NAME_ALLOW = {
-    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
-    "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME",
-    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
-    "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "NUMBER_OF_PROCESSORS",
-    "PROCESSOR_ARCHITECTURE", "OS", "LANG", "LC_ALL",
-    "PYTHONPATH", "PYTHONIOENCODING", "PYTHONUTF8", "PYTHONDONTWRITEBYTECODE",
-    "VIRTUAL_ENV", "CONDA_PREFIX",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HOME",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "COMMONPROGRAMFILES",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "OS",
+    "LANG",
+    "LC_ALL",
+    "PYTHONPATH",
+    "PYTHONIOENCODING",
+    "PYTHONUTF8",
+    "PYTHONDONTWRITEBYTECODE",
+    "VIRTUAL_ENV",
+    "CONDA_PREFIX",
     # 向量后端配置：必须成对、且只允许白名单组合
-    "KB_VECTOR_DIR", "KB_EMBEDDING_BACKEND",
-    "OLLAMA_EMBED_URL", "OLLAMA_EMBED_MODEL", "OLLAMA_NUM_CTX",
+    "KB_VECTOR_DIR",
+    "KB_EMBEDDING_BACKEND",
+    "OLLAMA_EMBED_URL",
+    "OLLAMA_EMBED_MODEL",
+    "OLLAMA_NUM_CTX",
     # 测试与诊断脚本可能需要
     "GOLDEN_TEST_SET_PATH",
 }
@@ -58,8 +84,11 @@ _KB_VECTOR_V4 = "kb_vectors"
 _KB_BACKEND_M3 = "bge-m3"
 _KB_BACKEND_V4 = "text-embedding-v4"
 _KB_ENV_KEYS = (
-    "KB_VECTOR_DIR", "KB_EMBEDDING_BACKEND",
-    "OLLAMA_EMBED_URL", "OLLAMA_EMBED_MODEL", "OLLAMA_NUM_CTX",
+    "KB_VECTOR_DIR",
+    "KB_EMBEDDING_BACKEND",
+    "OLLAMA_EMBED_URL",
+    "OLLAMA_EMBED_MODEL",
+    "OLLAMA_NUM_CTX",
 )
 
 
