@@ -176,7 +176,7 @@ def _print_check_summary(
 
 
 def check(cases_path: Path, kb: Path, use_graph: bool = True, verbose: bool = True) -> dict:
-    payload = json.loads(cases_path.read_text(encoding="utf-8"))
+    payload = json.loads(cases_path.read_text(encoding="utf-8"))  # NOSONAR: 本地维护脚本显式题集路径
     cases = payload.get("questions") or []
     literal_words = _collect_literal_words(cases)
     if verbose:

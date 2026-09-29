@@ -36,7 +36,7 @@ def _default_workspace() -> str:
 
 
 def _load_cases(path: str) -> List[Dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:  # NOSONAR: 本地评测 CLI 显式题集路径
         data = json.load(f)
     return list(data.get("questions") or [])
 

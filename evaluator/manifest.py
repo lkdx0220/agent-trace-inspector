@@ -28,7 +28,7 @@ def sha256_file(path: str | Path) -> Optional[str]:
     if not p.exists() or not p.is_file():
         return None
     h = hashlib.sha256()
-    with open(p, "rb") as f:
+    with open(p, "rb") as f:  # NOSONAR: 本地 CLI 显式路径；调用方来自仓库 manifest/config
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()

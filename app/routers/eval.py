@@ -86,7 +86,7 @@ def run_live_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # NOSONAR: case_ids/name 已由 _validate_live_payload 白名单校验
             cmd,
             cwd=str(INSPECTOR_ROOT),
             env=env,

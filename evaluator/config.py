@@ -86,7 +86,7 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     if yaml is None:
         raise RuntimeError("缺少 PyYAML，无法读取 evaluator 配置")
     try:
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}  # NOSONAR: 本地 CLI 显式配置文件路径
     except Exception as exc:
         raise RuntimeError(f"配置解析失败: {config_path}: {type(exc).__name__}: {exc}") from exc
     if not isinstance(data, dict):

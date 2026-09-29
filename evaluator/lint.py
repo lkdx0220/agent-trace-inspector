@@ -246,7 +246,7 @@ def _load_lint_cases(cases_path: str) -> Tuple[Optional[Dict[str, Any]], Optiona
     if not os.path.exists(cases_path):
         return None, {"ok": False, "errors": [f"题集文件不存在: {cases_path}"], "warnings": [], "info": []}
     try:
-        with open(cases_path, "r", encoding="utf-8") as f:
+        with open(cases_path, "r", encoding="utf-8") as f:  # NOSONAR: 本地体检 CLI 显式题集路径
             data = json.load(f)
     except Exception as exc:
         return None, {
@@ -412,7 +412,7 @@ def lint_cases(cases_path: str, results_dir: str = "") -> Dict[str, Any]:
 
 def _load_results(results_dir: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
-    for path in sorted(glob.glob(os.path.join(results_dir, "q_*.json"))):
+    for path in sorted(glob.glob(os.path.join(results_dir, "q_*.json"))):  # NOSONAR: 本地体检 CLI 显式结果目录
         try:
             with open(path, "r", encoding="utf-8") as f:
                 rows.append(json.load(f))
