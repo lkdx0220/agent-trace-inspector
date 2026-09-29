@@ -87,7 +87,7 @@ def export_fixtures(run_dir: str, ids: List[str], out_dir: str) -> List[Path]:
         try:
             manifest = _load_json(manifest_path)
             cases_path = Path(str(manifest.get("evalset_file") or "")) or DEFAULT_CASES
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             cases_path = DEFAULT_CASES
     if not cases_path.exists():
         raise ValueError(f"题集文件不存在: {cases_path}")

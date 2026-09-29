@@ -8,6 +8,7 @@ from app.services.coverage_gate import missing_orders
 from app.services.path_guard import is_allowed_project_path
 from evaluator.contract import AgentResult, AgentTimings
 from evaluator.scorers.keywords import normalize_keyword
+from tools import quality_gate
 
 
 def test_agent_result_roundtrip():
@@ -886,3 +887,8 @@ def test_judge_scores_and_cache(monkeypatch):
         assert "k2" in cache_path.read_text(encoding="utf-8")
     finally:
         cache_path.unlink(missing_ok=True)
+
+
+def test_except_hygiene_has_no_silent_exception():
+    result = quality_gate.check_except_hygiene()
+    assert result["status"] == "pass", result.get("top")

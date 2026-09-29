@@ -416,7 +416,7 @@ def _load_results(results_dir: str) -> List[Dict[str, Any]]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 rows.append(json.load(f))
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             continue
     return rows
 
@@ -452,6 +452,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 if __name__ == "__main__":
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    except Exception:
+    except (AttributeError, ValueError, OSError):
         pass
     raise SystemExit(main())

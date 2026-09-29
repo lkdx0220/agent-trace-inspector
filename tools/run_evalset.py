@@ -273,6 +273,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 if __name__ == "__main__":
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    except Exception:
+    except (AttributeError, ValueError, OSError):
         pass
     raise SystemExit(main())

@@ -27,7 +27,7 @@ def get_plan_system_prompt(project_path: Optional[str] = None) -> str:
     path = _prompt_path(project_path, PLAN_PROMPT_REL)
     try:
         return path.read_text(encoding="utf-8")
-    except Exception:
+    except OSError:
         return ""
 
 
@@ -36,7 +36,7 @@ def get_answer_system_prompt(project_path: Optional[str] = None) -> str:
     path = _prompt_path(project_path, ANSWER_PROMPT_REL)
     try:
         return path.read_text(encoding="utf-8")
-    except Exception:
+    except OSError:
         return ""
 
 

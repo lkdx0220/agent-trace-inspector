@@ -92,7 +92,7 @@ def _extract_json(content: str) -> Optional[Dict[str, Any]]:
         text = fence.group(1).strip()
     try:
         return json.loads(text)
-    except Exception:
+    except json.JSONDecodeError:
         pass
     # 兜底：取第一个 { 到最后一个 }
     start = text.find("{")
@@ -100,7 +100,7 @@ def _extract_json(content: str) -> Optional[Dict[str, Any]]:
     if start >= 0 and end > start:
         try:
             return json.loads(text[start : end + 1])
-        except Exception:
+        except json.JSONDecodeError:
             return None
     return None
 

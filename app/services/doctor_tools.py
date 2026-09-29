@@ -158,7 +158,7 @@ def _run_probe(
             out_payload = left.rsplit(marker, 1)[0]
             try:
                 return {"ok": True, "data": json.loads(out_payload)}
-            except Exception as e:
+            except json.JSONDecodeError as e:
                 return {"ok": False, "error": f"probe JSON 解析失败: {e}", "stdout_tail": stdout[-1500:]}
         return {
             "ok": False,
@@ -170,12 +170,12 @@ def _run_probe(
     finally:
         try:
             probe_file.unlink()
-        except Exception:
+        except OSError:
             pass
         if payload_file is not None:
             try:
                 payload_file.unlink()
-            except Exception:
+            except OSError:
                 pass
 
 
@@ -522,7 +522,7 @@ def read_project_file(project_path: str, rel_path: str, start_line: int = 1, end
         return {"ok": False, "error": f"禁止读取敏感/非源码文件: {rel_path}"}
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except Exception as e:
+    except (OSError, UnicodeDecodeError) as e:
         return {"ok": False, "error": f"读取失败: {e}"}
     start = max(1, int(start_line))
     end = min(len(lines), int(end_line)) if end_line and int(end_line) > 0 else len(lines)
@@ -570,7 +570,7 @@ def grep_project(project_path: str, pattern: str, rel_path: str = "") -> Dict[st
                 continue
             try:
                 text = p.read_text(encoding="utf-8", errors="replace")
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 continue
             for i, line in enumerate(text.splitlines(), 1):
                 if regex.search(line):
@@ -599,7 +599,7 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
         )
         if r.returncode == 0:
             head = r.stdout.strip()
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
     try:
         r = subprocess.run(
@@ -611,7 +611,7 @@ def _project_vcs_info(project_path: str) -> Dict[str, Any]:
         )
         if r.returncode == 0:
             dirty = bool(r.stdout.strip())
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
     return {
         "source": "current_working_tree",

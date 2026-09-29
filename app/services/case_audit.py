@@ -147,7 +147,7 @@ def _llm_audit(question: str, answer: str, reference: str) -> Optional[Dict[str,
                 "score": float(data.get("score") or 0.0),
                 "reason": str(data.get("reason") or "")[:500],
             }
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
             continue
     return None
 

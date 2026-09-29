@@ -45,7 +45,7 @@ def _git_commit(cwd: str | Path) -> str:
             errors="replace",
             timeout=15,
         )
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         return ""
     return (proc.stdout or "").strip()
 
@@ -62,7 +62,7 @@ def _git_status_porcelain(cwd: str | Path) -> str:
             errors="replace",
             timeout=15,
         )
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         return ""
     return (proc.stdout or "").strip()
 
@@ -85,7 +85,7 @@ def kb_manifest_hash(project_path: str | Path, kb_dir: str = "kb_vectors_m3") ->
         return None
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return None
     for key in ("kb_snapshot_hash", "snapshot_hash", "content_hash", "hash"):
         value = data.get(key)

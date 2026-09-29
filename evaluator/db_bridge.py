@@ -26,7 +26,7 @@ from schemas.eval import RunCaseResult, RunRecord  # noqa: E402
 def _load_cases(path: str) -> Dict[str, Dict[str, Any]]:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return {}
     return {str(q.get("id")): q for q in (data.get("questions") or []) if isinstance(q, dict)}
 
@@ -36,7 +36,7 @@ def _load_rows(results_dir: Path) -> List[Dict[str, Any]]:
     for path in sorted(glob.glob(str(results_dir / "q_*.json"))):
         try:
             rows.append(json.loads(Path(path).read_text(encoding="utf-8")))
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             continue
     return rows
 

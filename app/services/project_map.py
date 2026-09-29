@@ -37,7 +37,7 @@ SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "data", "lo
 def _safe_read(path: Path, limit: int = 200000) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")[:limit]
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 

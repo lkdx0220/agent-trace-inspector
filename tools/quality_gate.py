@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -34,7 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except Exception:
+    except (AttributeError, ValueError, OSError):
         pass
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -236,7 +237,7 @@ def check_radon() -> Dict[str, Any]:
         }
     try:
         data = json.loads(r["stdout"] or "{}")
-    except Exception:
+    except json.JSONDecodeError:
         return {
             "name": "radon",
             "status": "error",
@@ -353,7 +354,7 @@ def check_pytest() -> Dict[str, Any]:
     percent: Optional[float] = None
     try:
         (REPORTS_DIR / "pytest_full.txt").write_text(text, encoding="utf-8")
-    except Exception:
+    except OSError:
         pass
     if cov_json.exists():
         try:
@@ -426,9 +427,53 @@ def check_import_linter() -> Dict[str, Any]:
     }
 
 
+def check_except_hygiene() -> Dict[str, Any]:
+    """禁止新增“静默吞错”的 except Exception。
+
+    规则：except Exception 的处理体如果只有 pass/continue/break，必须在同一行
+    写 `# boundary:` 说明这是外部边界。内部逻辑应捕获具体异常。
+    """
+    issues: List[str] = []
+    for target in TARGETS:
+        for path in Path(target).rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+                tree = ast.parse(source)
+            except (OSError, SyntaxError, UnicodeDecodeError):
+                continue
+            lines = source.splitlines()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ExceptHandler) or node.type is None:
+                    continue
+                exc_type = node.type
+                is_exception = (isinstance(exc_type, ast.Name) and exc_type.id == "Exception") or (
+                    isinstance(exc_type, ast.Attribute) and exc_type.attr == "Exception"
+                )
+                if not is_exception:
+                    continue
+                body = node.body
+                if len(body) != 1 or not isinstance(body[0], (ast.Pass, ast.Continue, ast.Break)):
+                    continue
+                handler_line = lines[node.lineno - 1] if 0 <= node.lineno - 1 < len(lines) else ""
+                if "# boundary:" in handler_line:
+                    continue
+                issues.append(f"{path}:{node.lineno} except Exception 静默吞错，需收窄异常或加 `# boundary:` 注释")
+    return {
+        "name": "except-hygiene",
+        "status": "pass" if not issues else "fail",
+        "duration_s": 0.0,
+        "issue_count": len(issues),
+        "summary": f"{len(issues)} 处静默 except Exception" if issues else "无静默吞错",
+        "top": issues[:10],
+    }
+
+
 CHECKS = {
     "ruff": check_ruff,
     "ruff-format": check_ruff_format,
+    "except-hygiene": check_except_hygiene,
     "mypy": check_mypy,
     "radon": check_radon,
     "vulture": check_vulture,
@@ -459,7 +504,7 @@ def main() -> int:
         print(f"[quality-gate] running {name} ...", flush=True)
         try:
             results[name] = fn()
-        except Exception as e:
+        except Exception as e:  # boundary: one check failure must not kill the gate
             results[name] = {
                 "name": name,
                 "status": "error",

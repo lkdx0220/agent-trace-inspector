@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -81,15 +82,15 @@ def _ensure_tables(conn: Any) -> None:
     )
     try:
         conn.execute("ALTER TABLE diagnoses ADD COLUMN report_text TEXT")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
     try:
         conn.execute("ALTER TABLE test_cases ADD COLUMN match_mode TEXT DEFAULT 'all'")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
     try:
         conn.execute("ALTER TABLE test_cases ADD COLUMN alternatives TEXT")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
     conn.commit()
 
@@ -313,7 +314,7 @@ def _golden_match_modes() -> Dict[str, str]:
     try:
         data = json.loads(GOLDEN_SET_PATH.read_text(encoding="utf-8"))
         return {q.get("id", ""): (q.get("match_mode") or "all") for q in data.get("questions", [])}
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return {}
 
 

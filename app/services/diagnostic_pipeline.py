@@ -194,11 +194,11 @@ def _stage_planning(ctx: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     answer_prompt_head = ""
     try:
         plan_prompt_head = (get_plan_system_prompt(project_path) or "")[:2200]
-    except Exception:
+    except OSError:
         pass
     try:
         answer_prompt_head = (get_answer_system_prompt(project_path) or "")[:2200]
-    except Exception:
+    except OSError:
         pass
     data = {
         "plan_events": signal.get("plan_events"),

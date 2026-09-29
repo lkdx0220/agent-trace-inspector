@@ -69,7 +69,7 @@ def _iter_dump_texts(kb: Path) -> Iterator[str]:
                     continue
                 try:
                     row = json.loads(line)
-                except Exception:
+                except json.JSONDecodeError:
                     continue
                 text = row.get("document")
                 if text:
@@ -83,7 +83,7 @@ def _iter_graph_texts(kb: Path) -> Iterator[str]:
         return
     try:
         graph = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return
     entries = graph.get("entries") or {}
     rows = entries.values() if isinstance(entries, dict) else entries

@@ -147,7 +147,7 @@ def _read_dotenv_value(name: str) -> str:
         return ""
     try:
         values = dotenv_values(env_path)
-    except Exception:
+    except OSError:
         return ""
     return str(values.get(name) or "").strip()
 
@@ -225,7 +225,7 @@ def _load_cache() -> None:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(data, dict):
             _CACHE = {str(k): str(v) for k, v in data.items()}
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         _CACHE = {}
 
 
@@ -237,7 +237,7 @@ def save_cache() -> None:
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(json.dumps(_CACHE, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
+    except OSError:
         pass
 
 

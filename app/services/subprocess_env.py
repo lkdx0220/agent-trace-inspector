@@ -105,7 +105,7 @@ def _read_env_file(path: Path) -> Dict[str, str]:
             key = key.strip()
             if key in _PROJECT_ENV_KEYS:
                 out[key] = value.strip().strip('"').strip("'")
-    except Exception:
+    except OSError:
         pass
     return out
 

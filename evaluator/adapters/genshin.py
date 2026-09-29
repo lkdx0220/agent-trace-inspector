@@ -189,7 +189,7 @@ def _invoke_agent(
         if tracer is not None:
             try:
                 tracer.disable_trace()
-            except Exception:
+            except Exception:  # boundary: third-party tracer cleanup
                 pass
         sys.stdout = old_stdout
     return result, error, t_invoke_start, t_invoke_end, started_at
@@ -280,7 +280,7 @@ def main() -> int:
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw or "{}")
-    except Exception as exc:
+    except json.JSONDecodeError as exc:
         print(json.dumps({"status": "agent_error", "error": f"invalid stdin JSON: {exc}"}, ensure_ascii=False))
         return 2
     result = run_agent(str(payload.get("question") or ""), str(payload.get("context") or ""))

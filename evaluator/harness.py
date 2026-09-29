@@ -150,12 +150,12 @@ def _parse_adapter_stdout(raw: str) -> Tuple[Optional[Dict[str, Any]], str]:
     try:
         data = json.loads(raw)
         return (data if isinstance(data, dict) else {}), ""
-    except Exception:
+    except json.JSONDecodeError:
         lines = [line for line in raw.splitlines() if line.strip()]
         try:
             data = json.loads(lines[-1]) if lines else {}
             return (data if isinstance(data, dict) else {}), ""
-        except Exception as exc:
+        except json.JSONDecodeError as exc:
             return None, f"adapter stdout 不是合法 JSON: {type(exc).__name__}: {exc}"
 
 

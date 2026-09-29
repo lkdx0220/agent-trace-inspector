@@ -44,7 +44,7 @@ def _file_sha256(path: Path) -> Optional[str]:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(chunk)
         return h.hexdigest()
-    except Exception:
+    except OSError:
         return None
 
 
@@ -70,7 +70,7 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
         )
         if r.returncode == 0:
             info["git_commit"] = r.stdout.strip()
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
     try:
         r = subprocess.run(
@@ -85,7 +85,7 @@ def _git_info(project_path: Path) -> Dict[str, Any]:
             lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
             info["git_dirty"] = bool(lines)
             info["dirty_files"] = [ln[2:].strip() for ln in lines[:50]]
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
     return info
 

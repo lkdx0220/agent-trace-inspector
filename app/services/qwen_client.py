@@ -55,7 +55,7 @@ def _read_env_file(path: Path) -> Dict[str, str]:
                 continue
             k, v = line.split("=", 1)
             out[k.strip()] = v.strip().strip('"').strip("'")
-    except Exception:
+    except OSError:
         pass
     return out
 

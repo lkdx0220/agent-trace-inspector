@@ -16,7 +16,7 @@ def _ms(a: Any, b: Any) -> int:
         if isinstance(b, str):
             b = datetime.fromisoformat(b)
         return int((b - a).total_seconds() * 1000)
-    except Exception:
+    except (TypeError, ValueError):
         return 0
 
 

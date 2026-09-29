@@ -194,7 +194,7 @@ def semantic_keyword_batch_check(answer: str, keywords: List[str], project_path:
                 elif isinstance(item, str) and item in keywords:
                     result.append(item)
             return result
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
             continue
     return []
 
@@ -276,7 +276,7 @@ def semantic_forbidden_batch_check(
                 elif isinstance(item, str) and item in keywords:
                     result.append(item)
             return result
-        except Exception:
+        except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
             continue
     # 裁判调用/解析失败时保守回退：按原裸词命中处理。
     return list(keywords)
