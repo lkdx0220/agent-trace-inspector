@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -486,3 +487,66 @@ def test_exporter_status_and_tool_call_lookup():
     assert found is not None
     assert found["name"] == "hybrid_search"
     assert genshin_exporter._find_tool_call([msg], "missing") is None  # type: ignore[list-item]
+
+
+# ============================================================
+# Sonar 修复点：HTTP 入参校验 / 夹具导出路径守卫
+# ============================================================
+
+
+def test_validate_live_payload_rejects_unsafe_arguments():
+    from app.config import DEFAULT_PROJECT_PATH
+    from app.routers.eval import _validate_live_payload
+
+    project, case_ids, name = _validate_live_payload(
+        {"project_path": DEFAULT_PROJECT_PATH, "case_ids": ["F1", "R5"], "name": "实时评测"}
+    )
+    assert project
+    assert case_ids == ["F1", "R5"]
+    assert name == "实时评测"
+
+    with pytest.raises(HTTPException):
+        _validate_live_payload({"project_path": DEFAULT_PROJECT_PATH, "case_ids": ["--bad"]})
+    with pytest.raises(HTTPException):
+        _validate_live_payload({"project_path": DEFAULT_PROJECT_PATH, "case_ids": ["F1"], "name": "-bad"})
+
+
+def test_export_regression_fixtures_path_guard_and_export(workdir, monkeypatch):
+    from tools import export_regression_fixtures as fixtures
+
+    monkeypatch.setattr(fixtures, "ALLOWED_RUN_ROOTS", (workdir / "runs",))
+    monkeypatch.setattr(fixtures, "ALLOWED_CASES_ROOTS", (workdir,))
+    monkeypatch.setattr(fixtures, "ALLOWED_OUT_ROOTS", (workdir / "data",))
+
+    run_dir = workdir / "runs" / "run_x"
+    (run_dir / "results").mkdir(parents=True)
+    cases_path = workdir / "cases.json"
+    cases_path.write_text(
+        json.dumps(
+            {
+                "questions": [
+                    {
+                        "id": "F5",
+                        "question": "q",
+                        "must_contain": ["a"],
+                        "must_not_contain": [],
+                        "match_mode": "all",
+                        "alternatives": [],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "manifest.json").write_text(json.dumps({"evalset_file": str(cases_path)}), encoding="utf-8")
+    (run_dir / "results" / "q_F5.json").write_text(
+        json.dumps({"answer": "a", "contexts": "", "agent_status": "ok"}), encoding="utf-8"
+    )
+
+    exported = fixtures.export_fixtures(str(run_dir), ["F5"], str(workdir / "data" / "fixtures"))
+    assert len(exported) == 1
+    assert exported[0].exists()
+
+    with pytest.raises(ValueError):
+        fixtures.export_fixtures(str(workdir / "outside"), [], str(workdir / "data" / "fixtures"))

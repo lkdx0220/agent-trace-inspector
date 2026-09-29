@@ -51,7 +51,7 @@ def _validate_live_payload(payload: Dict[str, Any]) -> tuple[str, List[str], str
     if not case_ids or len(case_ids) > 100:
         raise HTTPException(status_code=400, detail="case_ids 数量必须在 1..100")
     # 所有值最终都会进子进程参数列表；只接受安全字符，避免参数注入。
-    if not all(_CASE_ID_RE.fullmatch(item) for item in case_ids):
+    if not all(_CASE_ID_RE.fullmatch(item) and not item.startswith("-") for item in case_ids):
         raise HTTPException(status_code=400, detail="case_ids 含非法字符")
     name = str(payload.get("name") or "实时评测").strip()
     if not _RUN_NAME_RE.fullmatch(name) or name.startswith("-"):

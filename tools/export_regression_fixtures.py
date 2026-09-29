@@ -104,7 +104,7 @@ def export_fixtures(run_dir: str, ids: List[str], out_dir: str) -> List[Path]:
     if not results_dir.exists():
         raise ValueError(f"results 目录不存在: {results_dir}")
     manifest_path = run_path / "manifest.json"
-    cases_path = _resolve_under(DEFAULT_CASES, ALLOWED_CASES_ROOTS)
+    cases_path = DEFAULT_CASES
     if manifest_path.exists():
         try:
             manifest = _load_json(manifest_path)
@@ -112,7 +112,8 @@ def export_fixtures(run_dir: str, ids: List[str], out_dir: str) -> List[Path]:
             if raw_cases:
                 cases_path = _resolve_under(raw_cases, ALLOWED_CASES_ROOTS)
         except (OSError, json.JSONDecodeError, ValueError):
-            cases_path = _resolve_under(DEFAULT_CASES, ALLOWED_CASES_ROOTS)
+            cases_path = DEFAULT_CASES
+    cases_path = _resolve_under(cases_path, ALLOWED_CASES_ROOTS)
     if not cases_path.exists():
         raise ValueError(f"题集文件不存在: {cases_path}")
     cases = _load_cases(cases_path)
