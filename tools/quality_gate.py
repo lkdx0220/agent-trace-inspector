@@ -139,6 +139,46 @@ def check_ruff() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------
+# 1.5) ruff format
+# ---------------------------------------------------------------
+
+
+def check_ruff_format() -> Dict[str, Any]:
+    cmd = _py_module("ruff") + ["format", "--check", "--diff"] + TARGETS
+    r = _run(cmd)
+    text = (r["stdout"] or "") + "\n" + (r["stderr"] or "")
+    if r["returncode"] == 0:
+        return {
+            "name": "ruff-format",
+            "status": "pass",
+            "duration_s": r["duration_s"],
+            "issue_count": 0,
+            "summary": "格式统一",
+            "top": [],
+        }
+    if r["returncode"] == 1:
+        files = sorted(
+            {line.split("Would reformat ")[-1].strip() for line in text.splitlines() if "Would reformat" in line}
+        )
+        return {
+            "name": "ruff-format",
+            "status": "fail",
+            "duration_s": r["duration_s"],
+            "issue_count": len(files),
+            "summary": f"{len(files)} 个文件格式不一致；运行 python -m ruff format . 修复",
+            "top": files[:10],
+        }
+    return {
+        "name": "ruff-format",
+        "status": "error",
+        "duration_s": r["duration_s"],
+        "issue_count": 0,
+        "summary": f"ruff format 执行失败 rc={r['returncode']}",
+        "top": _first_lines(text),
+    }
+
+
+# ---------------------------------------------------------------
 # 2) mypy
 # ---------------------------------------------------------------
 
@@ -388,6 +428,7 @@ def check_import_linter() -> Dict[str, Any]:
 
 CHECKS = {
     "ruff": check_ruff,
+    "ruff-format": check_ruff_format,
     "mypy": check_mypy,
     "radon": check_radon,
     "vulture": check_vulture,
