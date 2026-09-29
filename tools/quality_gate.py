@@ -337,6 +337,7 @@ COVERAGE_FAIL = 25.0
 
 def check_pytest() -> Dict[str, Any]:
     cov_json = REPORTS_DIR / "coverage.json"
+    cov_xml = REPORTS_DIR / "coverage.xml"
     cmd = _py_module("pytest") + [
         "-q",
         "-p",
@@ -348,6 +349,7 @@ def check_pytest() -> Dict[str, Any]:
         "--cov=exporter",
         "--cov-report=term-missing",
         f"--cov-report=json:{cov_json}",
+        f"--cov-report=xml:{cov_xml}",
     ]
     r = _run(cmd)
     text = (r["stdout"] or "") + "\n" + (r["stderr"] or "")

@@ -1,0 +1,36 @@
+name: sonarcloud
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sonarcloud:
+    runs-on: ubuntu-latest
+    # 来自 fork 的 PR 拿不到 SONAR_TOKEN，跳过，避免必红。
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r quality/requirements.txt
+
+      - name: Generate coverage
+        run: python tools/quality_gate.py
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
